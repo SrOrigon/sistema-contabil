@@ -1,0 +1,24 @@
+# Diretrizes do Projeto - Sistema Contábil e Fiscal
+
+## Stack e ambiente
+- Linguagem: PHP 8.3+ com `declare(strict_types=1);` em todos os arquivos.
+- Banco operacional local: SQLite via PDO, com o mesmo modelo lógico do schema PostgreSQL em `database/postgres.sql` (pgvector fica pronto para a base legislativa quando o PostgreSQL entrar).
+- Paradigma: orientação a objetos, serviços de aplicação, motores fiscais puros e agentes isolados da camada determinística.
+- Erros de domínio: exceções tipadas (`InvalidXmlException`, `FiscalRuleMismatchException`, `NcmNotFoundException`, `SimplesLimitExceededException`).
+- Dinheiro e alíquotas: nunca usar float. Valores em centavos inteiros e alíquotas em string com BCMath.
+
+## Regras críticas de negócio
+- Nenhuma LLM calcula imposto, alíquota ou redução. O cálculo é função pura do motor fiscal.
+- A LLM só entra por ferramentas: interpreta texto, escolhe uma hipótese e a ferramenta determinística aceita ou recusa.
+- Reforma tributária: cruzar NCM, CST, cClassTrib e redução com vigência. Código ausente da tabela oficial não é inventado.
+- Alíquotas de referência de 2027 em diante são estimativas editáveis, nunca tratadas como número fixado pelo Senado.
+- Nota fiscal importada não é reescrita. Correção do contador fica na auditoria, no razão e no aprendizado do escritório.
+- Conciliação automática somente com valor exato, janela de 3 dias, similaridade e um único documento candidato, somando pelo menos 95 pontos.
+- Partidas dobradas: todo lançamento fecha débito = crédito. Parecer executivo não é emitido se o auditor reverso apontar bloqueio.
+
+## Padrão de código
+- Métodos curtos e responsabilidade única.
+- Texto de interface e mensagens de erro em português.
+- Testes do motor fiscal em `tests/`, executáveis com `php tests/run.php`.
+- Não criar login enquanto o escritório não pedir. O acesso local permanece aberto de propósito.
+- Não entregar tela de demonstração desligada do motor. Cada ação da interface grava e lê o banco real.

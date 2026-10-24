@@ -1,0 +1,5 @@
+﻿database/acervo/
+storage/legislacao.sqlite
+storage/legislacao.sqlite-*
+.tools/
+

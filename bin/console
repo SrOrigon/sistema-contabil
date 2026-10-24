@@ -1,0 +1,45 @@
+<?php
+
+declare(strict_types=1);
+
+$comando = $argv[1] ?? 'ajuda';
+require dirname(__DIR__) . '/src/bootstrap.php';
+
+$dsn = env('DB_DSN', 'sqlite:storage/contabil.sqlite');
+if (str_starts_with((string) $dsn, 'sqlite:') && !str_starts_with((string) $dsn, 'sqlite::memory:')) {
+    $caminho = ROOT . DIRECTORY_SEPARATOR . substr((string) $dsn, 7);
+    $pasta = dirname($caminho);
+    if (!is_dir($pasta)) {
+        mkdir($pasta, 0777, true);
+    }
+    $dsn = 'sqlite:' . $caminho;
+}
+
+if ($comando === 'migrar') {
+    $banco = new App\Core\Database((string) $dsn);
+    (new App\Core\Migrator($banco))->migrate();
+    echo "Base pronta.\n";
+    exit(0);
+}
+
+if ($comando === 'servir') {
+    $php = PHP_BINARY;
+    $endereco = '127.0.0.1:8080';
+    echo "Sistema em http://{$endereco}\n";
+    passthru('"' . $php . '" -S ' . $endereco . ' -t "' . ROOT . '/public" "' . ROOT . '/public/router.php"');
+    exit(0);
+}
+
+if ($comando === 'testar') {
+    passthru('"' . PHP_BINARY . '" "' . ROOT . '/tests/run.php"');
+    exit(0);
+}
+
+if ($comando === 'indexar-leis') {
+    $novas = (new App\KnowledgeBase\AcervoIndexer())->indexar();
+    $total = (new App\KnowledgeBase\AcervoCatalog())->contar();
+    echo $novas . " normas novas. Índice com " . $total . " normas.\n";
+    exit(0);
+}
+
+echo "Comandos: migrar, servir, testar, indexar-leis\n";

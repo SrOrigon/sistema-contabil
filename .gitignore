@@ -1,0 +1,12 @@
+/vendor/
+/.tools/
+/.env
+/storage/*.sqlite
+/storage/*.sqlite-*
+/storage/xml/
+/storage/branding/
+/storage/tmp/
+/storage/legislacao.sqlite
+/storage/legislacao.sqlite-*
+/database/acervo/
+!/storage/.gitkeep

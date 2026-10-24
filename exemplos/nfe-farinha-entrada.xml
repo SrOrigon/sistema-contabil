@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe">
+  <NFe>
+    <infNFe Id="NFe35261011222333000181550010000000221000000022">
+      <ide><cUF>35</cUF><mod>55</mod><serie>1</serie><nNF>22</nNF><dhEmi>2026-10-01T11:00:00-03:00</dhEmi><tpNF>1</tpNF></ide>
+      <emit><CNPJ>11222333000181</CNPJ><xNome>Moinho Serra Ltda</xNome></emit>
+      <dest><CNPJ>45849027000191</CNPJ><xNome>Padaria Luz Ltda</xNome></dest>
+      <det nItem="1">
+        <prod><cProd>FT1</cProd><xProd>FARINHA DE TRIGO ESPECIAL</xProd><NCM>11010010</NCM><CFOP>1102</CFOP><uCom>SC</uCom><qCom>10.0000</qCom><vUnCom>154.0000</vUnCom><vProd>1540.00</vProd></prod>
+        <imposto>
+          <IBSCBS>
+            <CST>200</CST>
+            <gIBSCBS>
+              <vBC>1540.00</vBC>
+              <pRedAliq>100.00</pRedAliq>
+              <gIBSUF><pIBSUF>0.00</pIBSUF><vIBSUF>0.00</vIBSUF></gIBSUF>
+              <gCBS><pCBS>0.00</pCBS><vCBS>0.00</vCBS></gCBS>
+            </gIBSCBS>
+          </IBSCBS>
+        </imposto>
+      </det>
+      <total><ICMSTot><vProd>1540.00</vProd><vNF>1540.00</vNF></ICMSTot></total>
+    </infNFe>
+  </NFe>
+</nfeProc>
