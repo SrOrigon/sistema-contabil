@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Agents\Agentes\AuditorComplianceAgente;
 use App\Agents\Agentes\TesoureiroPreditivoAgente;
+use App\Agents\Orchestrators\FechamentoAutonomoOrchestrator;
 use App\App\AuditService;
 use App\App\BankService;
 use App\App\CompanyService;
@@ -12,12 +13,14 @@ use App\App\KnowledgeService;
 use App\App\LedgerService;
 use App\App\SettingsService;
 use App\App\StrategyService;
+use App\App\TesourariaEstocasticaEngine;
 use App\Core\Database;
 use App\Core\Migrator;
 use App\Core\Money;
 use App\Fiscal\Engine\IbsCbsCalculator;
 use App\Fiscal\Engine\PlanejamentoTributarioAvancado;
 use App\Fiscal\Engine\SimplesNacionalCalculator;
+use App\Fiscal\Engine\TeseTributariaEngine;
 use App\Fiscal\Engine\TransitionSimulator;
 use App\Fiscal\Parsers\NfeXmlStreamParser;
 use App\Fiscal\ReformaOficialSeeder;
@@ -490,6 +493,56 @@ $t->verdadeiro(isset($resPlan['cenarios']['simples_unificado']), 'Simula cenári
 $t->verdadeiro(isset($resPlan['cenarios']['simples_hibrido']), 'Simula cenário Simples Híbrido');
 $t->verdadeiro(isset($resPlan['cenarios']['lucro_presumido']), 'Simula cenário Lucro Presumido');
 $t->verdadeiro(isset($resPlan['cenario_recomendado']), 'Emite veredito de melhor cenário tributário');
+
+// 6. Testes do TeseTributariaEngine
+$teses = new TeseTributariaEngine();
+$resTese69 = $teses->analisarItem([
+    'descricao' => 'Servidor de Rede Corporativo',
+    'valor_centavos' => 1000000, // R$ 10.000,00
+    'icms_destacado_centavos' => 180000, // R$ 1.800,00 de ICMS
+], 'presumido');
+$t->verdadeiro($resTese69['oportunidades_encontradas'] >= 1, 'Localiza tese do Tema 69 STF');
+$t->igual('TEMA_69_STF', $resTese69['oportunidades'][0]['tese_codigo'], 'Código da Tese do Século');
+$t->igual(6570, $resTese69['oportunidades'][0]['credito_centavos'], 'Crédito de 3,65% s/ R$ 1.800 de ICMS dá R$ 65,70');
+
+$resMonofasico = $teses->analisarItem([
+    'descricao' => 'Medicamento Dipirona 500mg',
+    'ncm' => '3004.90.99',
+    'valor_centavos' => 100000, // R$ 1.000,00
+], 'simples');
+$t->verdadeiro($resMonofasico['oportunidades_encontradas'] >= 1, 'Localiza produto monofásico farmacêutico');
+$t->igual('MONOFASICO_SIMPLES', $resMonofasico['oportunidades'][0]['tese_codigo'], 'Segregação monofásica no Simples');
+
+// 7. Testes do TesourariaEstocasticaEngine
+$tesourariaEstocastica = new TesourariaEstocasticaEngine();
+$resEstocastica = $tesourariaEstocastica->projetar([
+    'saldo_inicial_centavos' => 1000000, // R$ 10.000,00
+    'recebimentos_previstos' => [
+        ['valor_centavos' => 3000000, 'dias_ate_vencimento' => 15, 'cliente' => 'Cliente A'],
+        ['valor_centavos' => 2000000, 'dias_ate_vencimento' => 45, 'cliente' => 'Cliente B'],
+    ],
+    'pagamentos_compulsorios' => [
+        ['valor_centavos' => 1500000, 'dias_ate_vencimento' => 20, 'descricao' => 'DAS e Tributos'],
+        ['valor_centavos' => 1000000, 'dias_ate_vencimento' => 25, 'descricao' => 'Folha Salários'],
+    ],
+    'taxa_inadimplencia_percentual' => 5.0,
+]);
+$t->verdadeiro(isset($resEstocastica['projecoes_por_horizonte'][30]), 'Gera projeção de liquidez de 30 dias');
+$t->verdadeiro(isset($resEstocastica['projecoes_por_horizonte'][60]), 'Gera projeção de liquidez de 60 dias');
+$t->verdadeiro(isset($resEstocastica['projecoes_por_horizonte'][90]), 'Gera projeção de liquidez de 90 dias');
+$t->igual('liquidez_segura', $resEstocastica['status_geral'], 'Classifica saúde financeira como segura com superávit');
+
+// 8. Testes do FechamentoAutonomoOrchestrator
+$migrador->migrate();
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='teses_tributarias_detectadas'") !== null, 'Tabela teses_tributarias_detectadas criada');
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='projecoes_fluxo_caixa'") !== null, 'Tabela projecoes_fluxo_caixa criada');
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='fechamentos_mensais'") !== null, 'Tabela fechamentos_mensais criada');
+
+$orquestradorFechamento = new FechamentoAutonomoOrchestrator($banco, $tesoureiro, $compliance, $folha, $teses);
+$resFechamento = $orquestradorFechamento->executarFechamento((int) $id, '2026-10');
+$t->verdadeiro(in_array($resFechamento['status'], ['concluido_com_sucesso', 'requer_atencao', 'bloqueado'], true), 'Status válido do fechamento autônomo');
+$t->verdadeiro(strlen((string) $resFechamento['resumo_leigo']) > 20, 'Gera resumo leigo em linguagem natural');
+$t->verdadeiro(isset($resFechamento['relatorio_tecnico']['competencia']), 'Gera relatório técnico com detalhamento');
 
 echo $t->passou . " testes passaram";
 if ($t->falhou > 0) {

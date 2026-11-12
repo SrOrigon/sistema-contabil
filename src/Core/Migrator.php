@@ -195,6 +195,32 @@ final class Migrator
                 encargos_centavos INTEGER NOT NULL DEFAULT 0, lancamento_id INTEGER,
                 calculada_em TEXT NOT NULL
             )",
+            "CREATE TABLE IF NOT EXISTS teses_tributarias_detectadas (
+                id $id, empresa_id INTEGER NOT NULL, tese_codigo TEXT NOT NULL,
+                titulo TEXT NOT NULL, competencia TEXT NOT NULL,
+                valor_base_centavos INTEGER NOT NULL DEFAULT 0,
+                credito_recuperavel_centavos INTEGER NOT NULL DEFAULT 0,
+                fundamento_legal TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pendente',
+                detalhes_json TEXT NOT NULL, identificada_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS projecoes_fluxo_caixa (
+                id $id, empresa_id INTEGER NOT NULL, data_base TEXT NOT NULL,
+                dias_horizonte INTEGER NOT NULL, saldo_inicial_centavos INTEGER NOT NULL,
+                entradas_previstas_centavos INTEGER NOT NULL, saidas_previstas_centavos INTEGER NOT NULL,
+                saldo_projetado_provavel_centavos INTEGER NOT NULL,
+                saldo_projetado_estresse_centavos INTEGER NOT NULL,
+                status_liquidez TEXT NOT NULL, alertas_json TEXT NOT NULL, criada_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS fechamentos_mensais (
+                id $id, empresa_id INTEGER NOT NULL, competencia TEXT NOT NULL,
+                status TEXT NOT NULL, diferenca_equacao_centavos INTEGER NOT NULL DEFAULT 0,
+                total_receitas_centavos INTEGER NOT NULL DEFAULT 0,
+                total_despesas_centavos INTEGER NOT NULL DEFAULT 0,
+                resultado_liquido_centavos INTEGER NOT NULL DEFAULT 0,
+                divergencias_total INTEGER NOT NULL DEFAULT 0,
+                relatorio_leigo TEXT NOT NULL, relatorio_tecnico TEXT NOT NULL,
+                executado_por TEXT NOT NULL, executado_em TEXT NOT NULL
+            )",
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_fatura_competencia ON faturas_saas (escritorio_id, competencia)',
             'CREATE INDEX IF NOT EXISTS idx_documentos_empresa ON documentos_fiscais (empresa_id, emissao)',
             'CREATE INDEX IF NOT EXISTS idx_transacoes_conta ON transacoes_bancarias (conta_id, data)',
@@ -203,6 +229,9 @@ final class Migrator
             'CREATE INDEX IF NOT EXISTS idx_divergencias_empresa ON divergencias_compliance (empresa_id, competencia)',
             'CREATE INDEX IF NOT EXISTS idx_colaboradores_empresa ON colaboradores (empresa_id, status)',
             'CREATE INDEX IF NOT EXISTS idx_provisoes_colaborador ON provisoes_trabalhistas (colaborador_id, competencia)',
+            'CREATE INDEX IF NOT EXISTS idx_teses_empresa ON teses_tributarias_detectadas (empresa_id, tese_codigo)',
+            'CREATE INDEX IF NOT EXISTS idx_projecoes_empresa ON projecoes_fluxo_caixa (empresa_id, data_base)',
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_fechamento_competencia ON fechamentos_mensais (empresa_id, competencia)',
         ];
     }
 
