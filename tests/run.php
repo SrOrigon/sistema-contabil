@@ -18,6 +18,7 @@ use App\Core\Database;
 use App\Core\Migrator;
 use App\Core\Money;
 use App\Fiscal\Engine\IbsCbsCalculator;
+use App\Fiscal\Engine\IngestorDocumentosEngine;
 use App\Fiscal\Engine\PlanejamentoTributarioAvancado;
 use App\Fiscal\Engine\SimplesNacionalCalculator;
 use App\Fiscal\Engine\TeseTributariaEngine;
@@ -543,6 +544,79 @@ $resFechamento = $orquestradorFechamento->executarFechamento((int) $id, '2026-10
 $t->verdadeiro(in_array($resFechamento['status'], ['concluido_com_sucesso', 'requer_atencao', 'bloqueado'], true), 'Status válido do fechamento autônomo');
 $t->verdadeiro(strlen((string) $resFechamento['resumo_leigo']) > 20, 'Gera resumo leigo em linguagem natural');
 $t->verdadeiro(isset($resFechamento['relatorio_tecnico']['competencia']), 'Gera relatório técnico com detalhamento');
+
+// 9. Testes do IngestorDocumentosEngine
+$ingestor = new IngestorDocumentosEngine($banco);
+
+// Teste com XML de NF-e
+$xmlNfeTeste = '<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe">
+  <NFe>
+    <infNFe Id="NFe35261011222333000181550010000012341000012345" versao="4.00">
+      <ide><nNF>1234</nNF><serie>1</serie><dhEmi>2026-10-15T10:00:00-03:00</dhEmi><mod>55</mod></ide>
+      <emit><CNPJ>11222333000181</CNPJ><xNome>Fornecedor Alpha Ltda</xNome></emit>
+      <dest><CNPJ>34028316000103</CNPJ><xNome>Padaria Bella Vista</xNome></dest>
+      <total>
+        <ICMSTot><vProd>5000.00</vProd><vNF>5000.00</vNF><vICMS>900.00</vICMS><vPIS>82.50</vPIS><vCOFINS>380.00</vCOFINS></ICMSTot>
+      </total>
+      <det nItem="1"><prod><xProd>Farinha de Trigo Especial</xProd></prod></det>
+    </infNFe>
+  </NFe>
+</nfeProc>';
+
+$resIngestaoNfe = $ingestor->processarConteudo($xmlNfeTeste, 'nfe-teste.xml', '34028316000103');
+$t->igual('sucesso', $resIngestaoNfe['status'], 'Status sucesso para XML de NF-e');
+$t->igual('NFE_XML', $resIngestaoNfe['tipo'], 'Tipo identificado como NFE_XML');
+$t->igual('1234', $resIngestaoNfe['numero'], 'Número da nota extraído');
+$t->igual('35261011222333000181550010000012341000012345', $resIngestaoNfe['chave'], 'Chave de 44 dígitos extraída');
+$t->igual(500000, $resIngestaoNfe['valores']['total_centavos'], 'Valor total de R$ 5.000,00 em centavos');
+$t->igual('entrada', $resIngestaoNfe['direcao'], 'Direção identificada como entrada para a Padaria destinatária');
+$t->verdadeiro(!$resIngestaoNfe['cnpj_divergente'], 'CNPJ em conformidade com o destinatário');
+
+// Teste com extrato OFX
+$ofxTeste = "OFXHEADER:100
+<OFX>
+  <BANKMSGSRSV1>
+    <STMTTRNRS>
+      <STMTRS>
+        <BANKTRANLIST>
+          <STMTTRN>
+            <TRNTYPE>DEBIT</TRNTYPE>
+            <DTPOSTED>20261016120000</DTPOSTED>
+            <TRNAMT>-1500.00</TRNAMT>
+            <FITID>TX1001</FITID>
+            <MEMO>PAGTO FORNECEDOR MOINHO</MEMO>
+          </STMTTRN>
+          <STMTTRN>
+            <TRNTYPE>CREDIT</TRNTYPE>
+            <DTPOSTED>20261017120000</DTPOSTED>
+            <TRNAMT>3200.50</TRNAMT>
+            <FITID>TX1002</FITID>
+            <MEMO>RECEBIMENTO CLIENTE RESTAURANTE</MEMO>
+          </STMTTRN>
+        </BANKTRANLIST>
+      </STMTRS>
+    </STMTTRNRS>
+  </BANKMSGSRSV1>
+</OFX>";
+
+$resIngestaoOfx = $ingestor->processarConteudo($ofxTeste, 'extrato.ofx');
+$t->igual('sucesso', $resIngestaoOfx['status'], 'Status sucesso para OFX');
+$t->igual('EXTRATO_OFX', $resIngestaoOfx['tipo'], 'Tipo identificado como EXTRATO_OFX');
+$t->igual(2, $resIngestaoOfx['quantidade_transacoes'], 'Extraídas 2 transações do OFX');
+$t->igual(320050, $resIngestaoOfx['total_entradas_centavos'], 'Total de entradas no OFX');
+$t->igual(150000, $resIngestaoOfx['total_saidas_centavos'], 'Total de saídas no OFX');
+
+// Teste com SPED Fiscal
+$spedTeste = "|0000|015|0|01102026|31102026|PADARIA BELLA VISTA LTDA|34028316000103||SP|3550308|||A|1|
+|C100|0|1|FORN01|55|00|1|1234|35261011222333000181550010000012341000012345|15102026|15102026|5000,00|0|0|0|5000,00|9|0|0|0|900,00|||||82,50|380,00||
+|9999|3|";
+
+$resIngestaoSped = $ingestor->processarConteudo($spedTeste, 'sped-outubro.txt', '34028316000103');
+$t->igual('sucesso', $resIngestaoSped['status'], 'Status sucesso para SPED Fiscal');
+$t->igual('SPED_FISCAL', $resIngestaoSped['tipo'], 'Tipo identificado como SPED_FISCAL');
+$t->igual('34028316000103', $resIngestaoSped['cnpj_escriturado'], 'CNPJ do bloco 0000 extraído');
+$t->igual(1, $resIngestaoSped['quantidade_notas'], 'Total de notas C100 contabilizadas');
 
 echo $t->passou . " testes passaram";
 if ($t->falhou > 0) {
