@@ -21,6 +21,92 @@ final class IngestorDocumentosEngine
     }
 
     /**
+     * Roteia o arquivo para a empresa correta (Tenant) no banco de dados,
+     * detectando a assinatura de conteúdo, verificando duplicidade e integridade,
+     * extraindo metadados prévios e indicando o agente de auditoria adequado.
+     *
+     * @param string $caminhoArquivo Caminho do arquivo recebido via upload ou API
+     * @param int|null $escritorioId ID do escritório (para restringir a busca multi-tenant)
+     * @return array<string, mixed>
+     */
+    public function rotear(string $caminhoArquivo, ?int $escritorioId = null): array
+    {
+        $resultado = $this->processar($caminhoArquivo);
+        if (($resultado['status'] ?? '') !== 'sucesso') {
+            return $resultado;
+        }
+
+        $empresaId = null;
+        $empresaNome = null;
+        $direcao = 'indeterminada';
+        $agenteDestino = 'AuditorComplianceAgente';
+
+        if ($this->db !== null) {
+            $filtroEscritorio = $escritorioId !== null ? ' AND escritorio_id = :escritorio' : '';
+            $params = [];
+            if ($escritorioId !== null) {
+                $params[':escritorio'] = $escritorioId;
+            }
+
+            // Para XMLs fiscais (NF-e, CT-e, NFS-e)
+            if (isset($resultado['emitente']['doc'], $resultado['destinatario']['doc'])) {
+                $cnpjDest = $resultado['destinatario']['doc'];
+                $cnpjEmit = $resultado['emitente']['doc'];
+
+                // 1. Checa se o destinatário é empresa cadastrada (Operação de Entrada)
+                if ($cnpjDest !== '') {
+                    $empresaDest = $this->db->one(
+                        "SELECT id, razao_social, cnpj, regime FROM empresas WHERE replace(replace(replace(cnpj, '.', ''), '/', ''), '-', '') = :cnpj {$filtroEscritorio} LIMIT 1",
+                        array_merge($params, [':cnpj' => $cnpjDest])
+                    );
+                    if ($empresaDest !== null) {
+                        $empresaId = (int) $empresaDest['id'];
+                        $empresaNome = (string) $empresaDest['razao_social'];
+                        $direcao = 'entrada';
+                        $agenteDestino = 'AuditorComplianceAgente';
+                    }
+                }
+
+                // 2. Se não for entrada, checa se o emitente é empresa cadastrada (Operação de Saída)
+                if ($empresaId === null && $cnpjEmit !== '') {
+                    $empresaEmit = $this->db->one(
+                        "SELECT id, razao_social, cnpj, regime FROM empresas WHERE replace(replace(replace(cnpj, '.', ''), '/', ''), '-', '') = :cnpj {$filtroEscritorio} LIMIT 1",
+                        array_merge($params, [':cnpj' => $cnpjEmit])
+                    );
+                    if ($empresaEmit !== null) {
+                        $empresaId = (int) $empresaEmit['id'];
+                        $empresaNome = (string) $empresaEmit['razao_social'];
+                        $direcao = 'saida';
+                        $agenteDestino = 'ValidadorRegrasAgente';
+                    }
+                }
+            } elseif ($resultado['tipo'] === 'SPED_FISCAL' && !empty($resultado['cnpj_escriturado'])) {
+                $cnpjSped = $resultado['cnpj_escriturado'];
+                $empresaSped = $this->db->one(
+                    "SELECT id, razao_social, cnpj, regime FROM empresas WHERE replace(replace(replace(cnpj, '.', ''), '/', ''), '-', '') = :cnpj {$filtroEscritorio} LIMIT 1",
+                    array_merge($params, [':cnpj' => $cnpjSped])
+                );
+                if ($empresaSped !== null) {
+                    $empresaId = (int) $empresaSped['id'];
+                    $empresaNome = (string) $empresaSped['razao_social'];
+                    $direcao = 'escrituracao_mensal';
+                    $agenteDestino = 'SpedFiscalParser';
+                }
+            } elseif ($resultado['tipo'] === 'EXTRATO_OFX') {
+                $agenteDestino = 'TesoureiroPreditivoAgente';
+            }
+        }
+
+        $resultado['empresa_id'] = $empresaId;
+        $resultado['empresa_nome'] = $empresaNome;
+        $resultado['direcao'] = $direcao;
+        $resultado['agente_destino'] = $agenteDestino;
+        $resultado['empresa_localizada'] = ($empresaId !== null);
+
+        return $resultado;
+    }
+
+    /**
      * Identifica o formato do documento inspecionando a assinatura de seu conteúdo.
      */
     public function identificarTipo(string $conteudo): string

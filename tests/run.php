@@ -20,6 +20,7 @@ use App\Core\Money;
 use App\Fiscal\Engine\IbsCbsCalculator;
 use App\Fiscal\Engine\IngestorDocumentosEngine;
 use App\Fiscal\Engine\PlanejamentoTributarioAvancado;
+use App\Fiscal\Engine\RoteadorArquivosService;
 use App\Fiscal\Engine\SimplesNacionalCalculator;
 use App\Fiscal\Engine\TeseTributariaEngine;
 use App\Fiscal\Engine\TransitionSimulator;
@@ -617,6 +618,26 @@ $t->igual('sucesso', $resIngestaoSped['status'], 'Status sucesso para SPED Fisca
 $t->igual('SPED_FISCAL', $resIngestaoSped['tipo'], 'Tipo identificado como SPED_FISCAL');
 $t->igual('34028316000103', $resIngestaoSped['cnpj_escriturado'], 'CNPJ do bloco 0000 extraído');
 $t->igual(1, $resIngestaoSped['quantidade_notas'], 'Total de notas C100 contabilizadas');
+
+// 10. Testes da Classe de Roteamento de Arquivos (RoteadorArquivosService)
+$tempDir = dirname(__DIR__) . '/storage/tmp';
+if (!is_dir($tempDir)) {
+    mkdir($tempDir, 0777, true);
+}
+$tempXmlPath = $tempDir . '/nfe_roteamento_teste.xml';
+file_put_contents($tempXmlPath, $xmlNfeTeste);
+
+$roteador = new RoteadorArquivosService($banco);
+$resRoteador = $roteador->rotear($tempXmlPath);
+$t->igual('sucesso', $resRoteador['status'], 'Roteador processa arquivo de disco');
+$t->verdadeiro($resRoteador['empresa_localizada'], 'Roteador localizou a empresa pelo CNPJ');
+$t->igual('entrada', $resRoteador['direcao'], 'Direção identificada como entrada');
+$t->igual('AuditorComplianceAgente', $resRoteador['agente_destino'], 'Agente de compliance definido como próximo passo');
+$t->verdadeiro(strlen((string) $resRoteador['checksum']) === 64, 'Checksum SHA-256 gerado');
+
+if (file_exists($tempXmlPath)) {
+    unlink($tempXmlPath);
+}
 
 echo $t->passou . " testes passaram";
 if ($t->falhou > 0) {
