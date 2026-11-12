@@ -17,6 +17,7 @@ use App\App\TesourariaEstocasticaEngine;
 use App\Core\Database;
 use App\Core\Migrator;
 use App\Core\Money;
+use App\Fiscal\Engine\CruzamentoFiscalEngine;
 use App\Fiscal\Engine\IbsCbsCalculator;
 use App\Fiscal\Engine\IngestorDocumentosEngine;
 use App\Fiscal\Engine\PlanejamentoTributarioAvancado;
@@ -638,6 +639,55 @@ $t->verdadeiro(strlen((string) $resRoteador['checksum']) === 64, 'Checksum SHA-2
 if (file_exists($tempXmlPath)) {
     unlink($tempXmlPath);
 }
+
+// 11. Testes do Motor de Cruzamento Fiscal (CruzamentoFiscalEngine)
+$cruzamento = new CruzamentoFiscalEngine($banco);
+
+$docsParaCruzamento = [
+    [
+        'numero' => '9001',
+        'chave' => '35261011222333000181550010000090011000090011',
+        'valor_nota_centavos' => 200000,
+        'tipo_operacao' => 'saida',
+        'emissao' => '2026-10-01',
+        'status_auditoria' => 'conforme',
+        'valor_quitado_centavos' => 0, // Sem pagamento
+    ],
+    [
+        'numero' => '9002',
+        'chave' => '35261011222333000181550010000090021000090022',
+        'valor_nota_centavos' => 150000,
+        'tipo_operacao' => 'saida',
+        'emissao' => '2026-10-05',
+        'status_auditoria' => 'cancelada', // Nota cancelada na SEFAZ
+    ],
+    [
+        'numero' => '9003',
+        'chave' => '35261011222333000181550010000090031000090033',
+        'valor_nota_centavos' => 300000,
+        'tipo_operacao' => 'entrada',
+        'emissao' => '2026-10-10',
+        'status_auditoria' => 'conforme',
+        'valor_quitado_centavos' => 300000, // Quitado
+    ],
+];
+
+$spedParaCruzamento = [
+    [
+        'numero' => '9003',
+        'chave' => '35261011222333000181550010000090031000090033',
+        'valor_total_centavos' => 250000, // Divergência de R$ 500 com a NF original de R$ 3.000
+    ],
+];
+
+$resCruzamento = $cruzamento->cruzar((int) $id, '2026-10', $docsParaCruzamento, [], $spedParaCruzamento);
+$t->verdadeiro($resCruzamento['total_divergencias'] >= 3, 'Cruzamento detecta múltiplas inconsistências');
+$t->verdadeiro($resCruzamento['bloqueios_criticos'] >= 2, 'Identifica bloqueios críticos (nota cancelada e divergência)');
+
+$tiposDetectados = array_column($resCruzamento['divergencias'], 'tipo');
+$t->verdadeiro(in_array('nota_cancelada_com_lancamento', $tiposDetectados, true), 'Detecta nota cancelada');
+$t->verdadeiro(in_array('omissao_sped_fiscal', $tiposDetectados, true), 'Detecta omissão de nota no SPED');
+$t->verdadeiro(in_array('divergencia_valor_nfe_sped', $tiposDetectados, true), 'Detecta divergência de valor entre NF-e e SPED');
 
 echo $t->passou . " testes passaram";
 if ($t->falhou > 0) {
