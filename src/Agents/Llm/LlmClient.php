@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Agents\Llm;
 
+use App\Agents\AgentCatalog;
+
 final class LlmClient
 {
     public function __construct(
@@ -38,13 +40,15 @@ final class LlmClient
         foreach ($hipoteses as $indice => $hipotese) {
             $lista .= $indice . '. ' . $hipotese . "\n";
         }
-        $pedido = "Você classifica a descrição de um item de nota fiscal.\nNCM: {$ncm}\nDescrição: {$descricao}\nHipóteses:\n{$lista}\nResponda somente JSON {\"escolha\": <indice>}. Não invente alíquota.";
+        $pedido = "NCM {$ncm}\nItem: {$descricao}\nHipóteses:\n{$lista}{\"escolha\": indice}";
         try {
-            $texto = $this->provedor === 'gemini' ? $this->gemini($pedido) : $this->openai($pedido);
+            $texto = $this->provedor === 'gemini'
+                ? $this->gemini($pedido, AgentCatalog::breve('validador-regras-tributarias'), true)
+                : $this->openai($pedido, AgentCatalog::breve('validador-regras-tributarias'), true);
         } catch (\Throwable) {
             return null;
         }
-        if (!preg_match('/\{\s*"escolha"\s*:\s*(\d+)\s*\}/', $texto, $encontrado)) {
+        if (!preg_match('/"escolha"\s*:\s*"?(\d+)"?/', $texto, $encontrado)) {
             return null;
         }
         $indice = (int) $encontrado[1];
@@ -58,39 +62,64 @@ final class LlmClient
             return null;
         }
         $base = '';
-        foreach ($trechos as $trecho) {
-            $base .= '[' . $trecho['diploma_legal'] . ' ' . $trecho['artigo'] . "]\n" . $trecho['conteudo'] . "\n\n";
+        foreach (array_slice($trechos, 0, 3) as $trecho) {
+            $base .= '[' . $trecho['diploma_legal'] . ' ' . $trecho['artigo'] . "]\n" . $this->recorte((string) $trecho['conteudo']) . "\n\n";
         }
-        $pedido = "Responda em português, para um contador, usando somente os trechos abaixo. Cite diploma e artigo. Se a base não responder, diga isso.\n\nPergunta: {$pergunta}\n\nTrechos:\n{$base}";
+        $pedido = "Una os trechos e cite diploma e artigo. Se não responderem a pergunta, diga isso.\n\nPergunta: {$pergunta}\n\nTrechos vigentes:\n{$base}";
         try {
-            return $this->provedor === 'gemini' ? $this->gemini($pedido) : $this->openai($pedido);
+            return $this->provedor === 'gemini'
+                ? $this->gemini($pedido, AgentCatalog::breve('consultor-artigo-lei'), false)
+                : $this->openai($pedido, AgentCatalog::breve('consultor-artigo-lei'), false);
         } catch (\Throwable) {
             return null;
         }
     }
 
-    private function gemini(string $pedido): string
+    private function gemini(string $pedido, string $sistema, bool $json): string
     {
         $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode($this->modelo()) . ':generateContent?key=' . rawurlencode($this->apiKey);
-        $resposta = $this->post($url, [
+        $corpo = [
+            'systemInstruction' => ['parts' => [['text' => $sistema]]],
             'contents' => [['role' => 'user', 'parts' => [['text' => $pedido]]]],
-            'generationConfig' => ['temperature' => 0],
-        ], []);
-        return (string) ($resposta['candidates'][0]['content']['parts'][0]['text'] ?? '');
+        ];
+        if ($json) {
+            $corpo['generationConfig'] = ['responseMimeType' => 'application/json'];
+        }
+        $resposta = $this->post($url, $corpo, []);
+        $texto = '';
+        foreach ($resposta['candidates'][0]['content']['parts'] ?? [] as $parte) {
+            if (!is_array($parte) || !empty($parte['thought'])) {
+                continue;
+            }
+            $texto .= (string) ($parte['text'] ?? '');
+        }
+        return $texto;
     }
 
-    private function openai(string $pedido): string
+    private function openai(string $pedido, string $sistema, bool $json): string
     {
         $base = rtrim($this->baseUrl !== '' ? $this->baseUrl : 'https://api.openai.com/v1', '/');
-        $resposta = $this->post($base . '/chat/completions', [
+        $corpo = [
             'model' => $this->modelo(),
-            'temperature' => 0,
             'messages' => [
-                ['role' => 'system', 'content' => 'Você não calcula tributo. Você escolhe hipóteses ou redige com base nos trechos recebidos.'],
+                ['role' => 'system', 'content' => $sistema],
                 ['role' => 'user', 'content' => $pedido],
             ],
-        ], ['Authorization: Bearer ' . $this->apiKey]);
+        ];
+        if ($json) {
+            $corpo['response_format'] = ['type' => 'json_object'];
+        }
+        $resposta = $this->post($base . '/chat/completions', $corpo, ['Authorization: Bearer ' . $this->apiKey]);
         return (string) ($resposta['choices'][0]['message']['content'] ?? '');
+    }
+
+    private function recorte(string $texto): string
+    {
+        $texto = trim((string) preg_replace('/[ \t]+/', ' ', $texto));
+        if (mb_strlen($texto) <= 900) {
+            return $texto;
+        }
+        return mb_substr($texto, 0, 900) . '…';
     }
 
     /** @param array<string, mixed> $corpo @param list<string> $cabecalhos @return array<string, mixed> */

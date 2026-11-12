@@ -10,7 +10,6 @@
       <label>Agência<input name="agencia"></label>
       <label>Conta<input name="conta"></label>
       <label>Saldo inicial<input name="saldo_inicial" value="0,00"></label>
-      <label>AccountId do agregador<input name="provedor_id" placeholder="opcional"></label>
       <button type="submit">Abrir conta</button>
     </form>
     <?php foreach ($contas as $conta): ?>
@@ -26,31 +25,38 @@
     <?php endforeach; ?>
   </section>
   <section class="card pilha">
-    <h2>Importar extrato</h2>
+    <h2>Enviar o extrato</h2>
+    <?php if ($contas === []): ?>
+      <p>Abra uma conta ao lado antes de enviar o extrato.</p>
+    <?php else: ?>
+    <p>O arquivo que o banco deixa baixar. O sistema procura a nota correspondente.</p>
     <form method="post" enctype="multipart/form-data" class="pilha">
       <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
       <input type="hidden" name="_acao" value="importar">
       <label>Conta
         <select name="conta_id"><?php foreach ($contas as $conta): ?><option value="<?= e((string) $conta['id']) ?>"><?= e($conta['apelido']) ?></option><?php endforeach; ?></select>
       </label>
-      <label>OFX ou CSV<input type="file" name="extrato" accept=".ofx,.csv,.txt" required></label>
-      <button type="submit">Conciliar extrato</button>
+      <label>Arquivo do banco<input type="file" name="extrato" accept=".ofx,.csv,.txt" required></label>
+      <button type="submit">Enviar extrato</button>
     </form>
-    <form method="post" class="pilha">
-      <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
-      <input type="hidden" name="_acao" value="pluggy">
-      <h2>Sincronizar Pluggy</h2>
-      <p class="sub">Usa as credenciais de Configurações e o accountId da conta. Sem credencial, a importação OFX/CSV continua completa.</p>
-      <label>Conta<select name="conta_id"><?php foreach ($contas as $conta): ?><option value="<?= e((string) $conta['id']) ?>"><?= e($conta['apelido']) ?></option><?php endforeach; ?></select></label>
-      <label>De<input type="date" name="de" value="<?= date('Y-m-01') ?>"></label>
-      <label>Até<input type="date" name="ate" value="<?= date('Y-m-d') ?>"></label>
-      <button class="secundario" type="submit">Buscar transações</button>
-    </form>
+    <details class="tecnico">
+      <summary>Buscar direto no banco, se já houver conexão</summary>
+      <form method="post" class="pilha">
+        <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
+        <input type="hidden" name="_acao" value="pluggy">
+        <label>Conta<select name="conta_id"><?php foreach ($contas as $conta): ?><option value="<?= e((string) $conta['id']) ?>"><?= e($conta['apelido']) ?></option><?php endforeach; ?></select></label>
+        <label>De<input type="date" name="de" value="<?= date('Y-m-01') ?>"></label>
+        <label>Até<input type="date" name="ate" value="<?= date('Y-m-d') ?>"></label>
+        <button class="secundario" type="submit">Buscar</button>
+      </form>
+    </details>
+    <?php endif; ?>
   </section>
 </div>
-<section class="card" style="margin-top:16px">
+<section class="card">
   <div class="item-lista">
-    <h2>Movimento</h2>
+    <h2>Lançamentos</h2>
+    <p class="sub">Confirme o par que o sistema achou, ou lance na conta certa.</p>
     <form method="post">
       <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
       <input type="hidden" name="_acao" value="cruzar">

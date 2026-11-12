@@ -156,29 +156,29 @@ final class TransitionSimulator
     {
         $competencia = (string) ($entrada['competencia_rotulo'] ?? 'desta competência');
         if ($regime === 'mei') {
-            return 'O MEI não exerce a opção híbrida do Simples Nacional ordinário. A comparação abaixo serve para medir o IBS e a CBS destacados em ' . $competencia . ' e o efeito de caixa do DAS-MEI informado. Confirme o enquadramento antes de qualquer migração.';
+            return 'O MEI não escolhe entre ficar no Simples ou destacar o imposto novo. A comparação mede o imposto destacado em ' . $competencia . ' e o efeito do DAS-MEI informado. Confirme o enquadramento antes de mudar.';
         }
         if ($regime !== 'simples') {
             $economia = $unificado['caixa_centavos'] - $hibrido['caixa_centavos'];
-            return 'Fora do Simples Nacional não há opção entre guia unificada e regime híbrido. O regime normal já é não cumulativo: os créditos de entrada abatem ' . Format::percentual($abate) . ' do IBS/CBS devido em ' . $competencia . '. A diferença de caixa frente a um cálculo sem crédito é de ' . Format::money($economia) . '.';
+            return 'Fora do Simples não há essa escolha. O crédito das compras cobre ' . Format::percentual($abate) . ' do imposto novo em ' . $competencia . '. A diferença frente a um cálculo sem crédito é de ' . Format::money($economia) . '.';
         }
         if ($unificado['caixa_centavos'] === 0 && $hibrido['caixa_centavos'] === 0 && ($entrada['aviso'] ?? null)) {
             return (string) $entrada['aviso'];
         }
         $economia = $unificado['caixa_centavos'] - $hibrido['caixa_centavos'];
         $lado = $economia > 0 ? 'híbrido' : ($economia < 0 ? 'unificado' : 'indiferente em caixa');
-        $texto = 'Em ' . $competencia . ', ' . Format::percentual($percentualPj) . ' da receita foi para pessoa jurídica. Os créditos de compras abatem ' . Format::percentual($abate) . ' do IBS e da CBS devidos. ';
+        $texto = 'Em ' . $competencia . ', ' . Format::percentual($percentualPj) . ' das vendas foram para empresa. O crédito das compras cobre ' . Format::percentual($abate) . ' do imposto novo. ';
         if ($lado === 'híbrido') {
-            $texto .= 'O regime híbrido reduz o desembolso em ' . Format::money($economia) . ' nesta competência e transfere crédito aos clientes pessoa jurídica. ';
+            $texto .= 'Destacar o imposto reduz o desembolso em ' . Format::money($economia) . ' neste mês e deixa crédito para o cliente empresa. ';
         } elseif ($lado === 'unificado') {
-            $texto .= 'O regime unificado desembolsa ' . Format::money(abs($economia)) . ' a menos, porque o crédito de entrada não compensa a saída da CBS/IBS da guia. ';
+            $texto .= 'Ficar no Simples desembolsa ' . Format::money(abs($economia)) . ' a menos, porque o crédito das compras não compensa o imposto destacado. ';
         } else {
-            $texto .= 'O desembolso de caixa dos dois regimes é igual nesta competência. ';
+            $texto .= 'Os dois caminhos desembolsam o mesmo neste mês. ';
         }
         if (bccomp($percentualPj, '30', 2) >= 0 && $split > 0) {
-            $texto .= 'Como a carteira pessoa jurídica é relevante, o híbrido ainda permite que os adquirentes aproveitem crédito. A retenção estimada do split payment nas vendas a pessoa jurídica é de ' . Format::money($split) . ', efeito de prazo e não de tributo novo.';
+            $texto .= 'Como boa parte das vendas é para empresa, destacar o imposto ainda deixa crédito para quem compra. A parte retida nessas vendas é de ' . Format::money($split) . ', efeito de prazo, não de imposto a mais.';
         } elseif ($split > 0) {
-            $texto .= 'A retenção estimada do split payment nas vendas a pessoa jurídica é de ' . Format::money($split) . '.';
+            $texto .= 'A parte retida nas vendas para empresa é de ' . Format::money($split) . '.';
         }
         return trim($texto);
     }
@@ -195,15 +195,15 @@ final class TransitionSimulator
                 $linhas[] = ['rotulo' => 'Partilha ' . $tributo, 'valor' => Format::money((int) $centavos), 'nota' => in_array($tributo, $das['por_fora'], true) ? 'Recolhido fora do DAS nesta faixa.' : 'Dentro do DAS.'];
             }
         }
-        $linhas[] = ['rotulo' => 'DAS ajustado à transição', 'valor' => Format::money($dasAjustado), 'nota' => 'Remove tributos já extintos no ano e aplica o fator de redução de ICMS/ISS.'];
-        $linhas[] = ['rotulo' => 'Débito de IBS nas saídas', 'valor' => Format::money($debitoIbs), 'nota' => $natureza === 'estimada' ? 'Alíquota de referência estimada, editável em Configurações.' : 'Alíquota legal de teste.'];
-        $linhas[] = ['rotulo' => 'Débito de CBS nas saídas', 'valor' => Format::money($debitoCbs), 'nota' => $natureza === 'estimada' ? 'Alíquota de referência estimada, editável em Configurações.' : 'Alíquota legal de teste.'];
-        $linhas[] = ['rotulo' => 'Crédito de IBS nas entradas', 'valor' => Format::money($creditoIbs), 'nota' => 'Aproveitado somente no híbrido ou no regime normal.'];
-        $linhas[] = ['rotulo' => 'Crédito de CBS nas entradas', 'valor' => Format::money($creditoCbs), 'nota' => 'Aproveitado somente no híbrido ou no regime normal.'];
-        $linhas[] = ['rotulo' => 'Caixa no regime unificado', 'valor' => Format::money((int) $unificado['caixa_centavos']), 'nota' => 'Sem crédito de entrada. Compensação de teste quando a lei do ano permitir.'];
-        $linhas[] = ['rotulo' => 'Caixa no regime híbrido', 'valor' => Format::money((int) $hibrido['caixa_centavos']), 'nota' => 'IBS/CBS por fora, não cumulativo, com saldo credor preservado.'];
-        $linhas[] = ['rotulo' => 'Vendas a pessoa jurídica', 'valor' => Format::percentual($percentualPj), 'nota' => 'Base do crédito transferido ao adquirente no híbrido.'];
-        $linhas[] = ['rotulo' => 'Retenção estimada do split payment', 'valor' => Format::money($split), 'nota' => 'Parcela do IBS/CBS das vendas a pessoa jurídica retida na liquidação.'];
+        $linhas[] = ['rotulo' => 'Guia ajustada ao ano', 'valor' => Format::money($dasAjustado), 'nota' => 'Tira o que já não vale neste ano e aplica a redução de ICMS ou ISS.'];
+        $linhas[] = ['rotulo' => 'IBS nas vendas', 'valor' => Format::money($debitoIbs), 'nota' => $natureza === 'estimada' ? 'Alíquota estimada. Dá para ajustar em Escritório.' : 'Alíquota de teste prevista em lei.'];
+        $linhas[] = ['rotulo' => 'CBS nas vendas', 'valor' => Format::money($debitoCbs), 'nota' => $natureza === 'estimada' ? 'Alíquota estimada. Dá para ajustar em Escritório.' : 'Alíquota de teste prevista em lei.'];
+        $linhas[] = ['rotulo' => 'Crédito de IBS nas compras', 'valor' => Format::money($creditoIbs), 'nota' => 'Vale ao destacar o imposto, ou fora do Simples.'];
+        $linhas[] = ['rotulo' => 'Crédito de CBS nas compras', 'valor' => Format::money($creditoCbs), 'nota' => 'Vale ao destacar o imposto, ou fora do Simples.'];
+        $linhas[] = ['rotulo' => 'Desembolso no Simples', 'valor' => Format::money((int) $unificado['caixa_centavos']), 'nota' => 'Sem crédito das compras.'];
+        $linhas[] = ['rotulo' => 'Desembolso destacando o imposto', 'valor' => Format::money((int) $hibrido['caixa_centavos']), 'nota' => 'Imposto por fora, com crédito das compras.'];
+        $linhas[] = ['rotulo' => 'Vendas para empresa', 'valor' => Format::percentual($percentualPj), 'nota' => 'Base do crédito que o cliente pode tomar.'];
+        $linhas[] = ['rotulo' => 'Parte retida nas vendas a empresa', 'valor' => Format::money($split), 'nota' => 'Parcela do imposto novo retida no pagamento. É prazo, não imposto a mais.'];
         return $linhas;
     }
 }

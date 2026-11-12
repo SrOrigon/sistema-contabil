@@ -16,6 +16,7 @@ use App\Fiscal\Engine\IbsCbsCalculator;
 use App\Fiscal\Engine\SimplesNacionalCalculator;
 use App\Fiscal\Engine\TransitionSimulator;
 use App\Fiscal\Parsers\NfeXmlStreamParser;
+use App\Fiscal\ReformaOficialSeeder;
 use App\Fiscal\Validators\CclassTribValidator;
 use App\Fiscal\Validators\NcmCorrelationValidator;
 use App\KnowledgeBase\HybridLawSearcher;
@@ -227,8 +228,188 @@ $t->verdadeiro(str_contains($simulado['recomendacao'], 'outubro de 2026'), 'Estr
 $consulta = (new KnowledgeService($banco, new SettingsService($banco)))->responder('Como funciona o Fator R?', '2026-10-01', $id);
 $t->verdadeiro(str_contains($consulta['resposta'], '28%'), 'Consultor responde com o trecho vigente');
 
+$zipCaminho = tempnam(sys_get_temp_dir(), 'lote');
+$zip = new ZipArchive();
+$zip->open($zipCaminho, ZipArchive::OVERWRITE);
+$zip->addFromString('pasta/fralda-lote.xml', $xml);
+$zip->addFromString('pasta/farinha-lote.xml', $compra);
+$zip->addFromString('pasta/leia-me.pdf', '%PDF-1.4');
+$zip->addFromString('__MACOSX/._fralda-lote.xml', $xml);
+$zip->addFromString('pasta/quebrada.xml', '<nota>sem estrutura</nota>');
+$zip->close();
+$lote = $auditoria->importar($id, $zipCaminho, 'fechamento.zip');
+$t->igual(2, count($lote), 'ZIP grava as notas válidas e segue depois do XML quebrado');
+$fraldaLote = $auditoria->documento($documentoId);
+$t->igual('pasta/fralda-lote.xml', $fraldaLote['arquivo_nome'] ?? '', 'Cada nota guarda o nome de dentro do ZIP');
+$resumoLote = $auditoria->resumoLote();
+$t->igual(2, $resumoLote['ignorados'], 'PDF e arquivo oculto do ZIP ficam de fora');
+$t->igual(1, count($resumoLote['erros']), 'XML sem nota entra no resumo e não interrompe o lote');
+@unlink($zipCaminho);
+
+$pastaAcervo = sys_get_temp_dir() . '/acervo-reforma-' . uniqid();
+$pasta214 = $pastaAcervo . '/federal/leis-complementares/2025';
+$pasta227 = $pastaAcervo . '/federal/leis-complementares/2026';
+mkdir($pasta214, 0777, true);
+mkdir($pasta227, 0777, true);
+file_put_contents($pasta214 . '/lcp-214-teste.md', "Republicação dos dispositivos vetados.\nArt. 26.\n");
+file_put_contents($pasta227 . '/lcp-227-teste.md', "Altera a LC 214.\nANEXO I\nNCM 1902.11.00 citado na ementa, sem grade.\n");
+$pastaCsv = sys_get_temp_dir() . '/tabelas-reforma-' . uniqid();
+mkdir($pastaCsv, 0777, true);
+file_put_contents($pastaCsv . '/cclass-trib.csv', "codigo;cst;descricao;reducao_ibs;reducao_cbs;fundamento;vigencia_inicio\n200001;200;Redução de teste;60;60;CSV de teste;2026-01-01\n");
+file_put_contents($pastaCsv . '/regras-ncm.csv', "ncm;match_tipo;descricao;reducao;cst;cclass_trib;palavras_incluir;palavras_excluir;fundamento;vigencia_inicio;vigencia_fim;prioridade\n19021100;prefixo;Massa de teste;100;200;;;;LC de teste;2026-01-01;;40\n");
+$semeador = new ReformaOficialSeeder($banco);
+$varredura214 = $semeador->varrerArquivo($pasta214 . '/lcp-214-teste.md');
+$t->igual(0, $varredura214['ncm'], 'Texto de veto da LC 214 não produz NCM');
+$t->verdadeiro(str_contains($varredura214['observacao'], 'vetados'), 'Arquivo curto com veto é identificado como republicação');
+$relatorio = $semeador->executar($pastaAcervo, $pastaCsv);
+$t->verdadeiro(str_contains($relatorio, 'não é inventado') === false, 'Quando o texto cita NCM, o relatório não diz que a lista estava vazia');
+$t->verdadeiro(str_contains($relatorio, 'Nada foi gravado a partir da prosa'), 'Citação solta de NCM não vira regra');
+$t->verdadeiro(str_contains($relatorio, '1 código'), 'CSV de cClassTrib entra pelo comando');
+$codigoTeste = $banco->one('SELECT cst, reducao_ibs FROM cclass_trib WHERE codigo = :codigo', [':codigo' => '200001']);
+$t->igual('200', $codigoTeste['cst'] ?? '', 'Código do CSV fica gravado com o CST informado');
+$regraTeste = $banco->one('SELECT reducao FROM regras_ncm WHERE ncm = :ncm AND descricao = :descricao', [':ncm' => '19021100', ':descricao' => 'Massa de teste']);
+$t->igual('100', $regraTeste['reducao'] ?? '', 'Regra de NCM do CSV fica gravada');
+$semeador->executar($pastaAcervo, $pastaCsv);
+$repetida = $banco->one('SELECT COUNT(*) AS total FROM regras_ncm WHERE ncm = :ncm AND descricao = :descricao', [':ncm' => '19021100', ':descricao' => 'Massa de teste']);
+$t->igual(1, (int) ($repetida['total'] ?? 0), 'Rodar o comando de novo não duplica a regra');
+$flag = $banco->one('SELECT valor FROM configuracoes WHERE chave = :chave', [':chave' => 'tabelas.cclass_oficial_completa']);
+$t->igual('0', $flag['valor'] ?? '', 'O comando não marca a tabela de cClassTrib como completa');
+
 @unlink($arquivo);
 @unlink($ofx);
+$catalogo = \App\Agents\AgentCatalog::todos();
+$t->igual(8, count($catalogo), 'O catálogo traz um agente por ferramenta');
+$t->igual(count(array_column($catalogo, 'ferramenta')), count(array_unique(array_column($catalogo, 'ferramenta'))), 'Nenhuma ferramenta fica com dois agentes');
+$tipos = ['codigo_ncm', 'codigo', 'texto', 'data', 'ano', 'dinheiro', 'percentual', 'centavos', 'inteiro', 'regime', 'status', 'decimal', 'escolha'];
+foreach ($catalogo as $agente) {
+    $t->verdadeiro($agente['variaveis'] !== [], $agente['id'] . ' declara variáveis');
+    foreach ($agente['variaveis'] as $variavel) {
+        $t->verdadeiro(in_array($variavel['tipo'], $tipos, true), $agente['id'] . ' tipa ' . $variavel['nome']);
+    }
+    $t->verdadeiro($agente['leis'] !== [], $agente['id'] . ' declara leis');
+    $instrucao = \App\Agents\AgentCatalog::instrucao($agente['id']);
+    $t->verdadeiro(str_contains($instrucao, $agente['ferramenta']), $agente['id'] . ' leva a própria ferramenta na instrução');
+}
+$t->verdadeiro(str_contains(\App\Agents\AgentCatalog::trava(), 'calcula imposto por conta própria'), 'A trava impede o agente de calcular sozinho');
+$semNcm = \App\Agents\LeitorDeVariaveis::ler(\App\Agents\Agentes\ValidadorRegrasAgente::contrato(), ['descricao' => 'Fralda', 'ncm' => ''], ['ncm', 'descricao']);
+$t->igual(false, $semNcm['ok'], 'NCM vazio interrompe o validador');
+$t->verdadeiro(str_contains($semNcm['mensagem'], 'ncm'), 'A mensagem cita a variável ncm');
+$ncmLido = \App\Agents\LeitorDeVariaveis::ler(\App\Agents\Agentes\ValidadorRegrasAgente::contrato(), [
+    'ncm' => '9619.00.10',
+    'descricao' => ' Fralda ',
+    'cclass_trib' => '',
+], ['ncm', 'descricao']);
+$t->igual(true, $ncmLido['ok'], 'NCM com pontuação e cClassTrib vazio são lidos');
+$t->igual('96190010', $ncmLido['valores']['ncm'], 'O NCM fica em oito dígitos');
+$t->igual(false, isset($ncmLido['valores']['cClassTrib']), 'cClassTrib vazio não é inventado');
+$ncmCurto = \App\Agents\LeitorDeVariaveis::ler(\App\Agents\Agentes\ValidadorRegrasAgente::contrato(), ['ncm' => '9619', 'descricao' => 'Fralda'], ['ncm', 'descricao']);
+$t->igual(false, $ncmCurto['ok'], 'NCM com menos de oito dígitos é ilegível');
+$simulacao = \App\Agents\LeitorDeVariaveis::ler(\App\Agents\Agentes\SimuladorRegimeAgente::contrato(), [
+    'ano' => '2026',
+    'regime' => 'lucro presumido',
+    'receita_mes' => '1.234,50',
+    'aliquota_ibs' => '17,70%',
+    'aliquota_cbs' => '8.80',
+]);
+$t->igual(true, $simulacao['ok'], 'O simulador lê ano, regime, receita e alíquotas');
+$t->igual(2026, $simulacao['valores']['ano'], 'O ano fica inteiro');
+$t->igual('presumido', $simulacao['valores']['regime'], 'Lucro presumido vira o regime presumido');
+$t->igual('1234.50', $simulacao['valores']['receita_mes'], 'A receita em reais brasileiros vira decimal');
+$t->igual('17.70', $simulacao['valores']['aliquota_ibs'], 'A alíquota perde o símbolo de percentual');
+$consulta = \App\Agents\Agentes\ConsultorArtigoAgente::ler('O que é a cesta básica?', '26/10/2026');
+$t->igual(true, $consulta['ok'], 'O consultor aceita a data brasileira');
+$t->igual('2026-10-26', $consulta['valores']['competencia'], 'A competência fica em AAAA-MM-DD');
+
+$aberta = \App\Fiscal\Engine\JanelaOpcaoHibrido::decidir('2026-09-15');
+$t->igual('aberta', $aberta['status'], '15/09/2026 a janela do primeiro semestre de 2027 está aberta');
+$t->igual('2026-10-30', $aberta['janela_fim'], 'A janela excepcional vai até 30/10/2026');
+$t->igual('2027-01-01', $aberta['semestre_inicio'], 'Setembro de 2026 decide janeiro de 2027');
+$retratacao = \App\Fiscal\Engine\JanelaOpcaoHibrido::decidir('2026-11-10');
+$t->igual('so_desistencia', $retratacao['status'], '10/11/2026 só cabe desistir');
+$t->igual('2026-11-30', $retratacao['retratacao_ate'], 'A desistência vai até 30/11/2026');
+$depois = \App\Fiscal\Engine\JanelaOpcaoHibrido::decidir('2026-12-01');
+$t->igual('futura', $depois['status'], 'Em dezembro de 2026 a próxima janela ainda não abriu');
+$t->igual('2027-03-01', $depois['janela_inicio'], 'A janela seguinte é março de 2027');
+$marco = \App\Fiscal\Engine\JanelaOpcaoHibrido::decidir('2027-03-15');
+$t->igual('aberta', $marco['status'], 'Março de 2027 decide o segundo semestre');
+$t->igual('2027-07-01', $marco['semestre_inicio'], 'Março decide julho');
+$ordinaria = \App\Fiscal\Engine\JanelaOpcaoHibrido::decidir('2028-09-10');
+$t->igual('2028-09-30', $ordinaria['janela_fim'], 'Fora de 2027 a janela termina em setembro');
+$t->igual(null, $ordinaria['retratacao_ate'], 'A lei não cria retratação fora do primeiro semestre de 2027');
+
+$conferencia = new \App\App\ConferenciaService($banco, new SettingsService($banco));
+$empresaConf = $empresas->obter($id);
+$semReceita = $conferencia->montar($empresaConf, ['de' => '2026-10', 'ate' => '2026-10'], '2026-11-10');
+$t->igual(null, $semReceita['diagnostico'], 'Sem RBT12 o diagnóstico não roda');
+$t->verdadeiro(str_contains((string) $semReceita['mensagem'], 'receita dos últimos 12 meses'), 'A mensagem pede a receita de 12 meses');
+$t->igual(true, $semReceita['pode_unificado'], 'Na retratação ainda dá para gravar o unificado');
+$t->igual(false, $semReceita['pode_hibrido'], 'Híbrido não grava sem a conta');
+$t->verdadeiro($semReceita['contagens']['erro'] >= 1, 'A fralda com redução zero entra como erro');
+$t->verdadeiro($semReceita['faixas'] !== [], 'A faixa sai da redução declarada');
+$comReceita = $conferencia->montar($empresaConf, [
+    'de' => '2026-10', 'ate' => '2026-10', 'rbt12' => '180000,00', 'margem' => '20',
+    'horas_adicionais' => '2', 'valor_hora' => '150,00',
+], '2026-11-10');
+$t->igual(2027, $comReceita['diagnostico']['ano_decisao'] ?? 0, 'A conta usa o ano do semestre em decisão');
+$t->verdadeiro(isset($comReceita['diagnostico']['unificado']['caixa_centavos']), 'Unificado e híbrido devolvem centavos');
+$t->igual(30000, $comReceita['honorario_centavos'], 'Duas horas a 150 reais são 300 reais');
+$t->igual(7, count($comReceita['projecao']), 'A projeção cobre 2027 a 2033');
+$meio = $conferencia->montar($empresaConf, ['de' => '2026-10', 'ate' => '2026-10', 'rbt12' => '180000,00', 'horas_adicionais' => '2'], '2026-11-10');
+$t->igual(null, $meio['honorario_centavos'], 'Horas sem valor da hora não viram honorário');
+$t->verdadeiro(str_contains((string) $meio['mensagem'], 'valor da hora'), 'A mensagem pede o valor da hora');
+try {
+    $conferencia->registrar($empresaConf, ['de' => '2026-10', 'ate' => '2026-10', 'rbt12' => '180000,00', 'escolha' => 'hibrido'], '2026-11-10');
+    $t->verdadeiro(false, 'Híbrido na retratação deveria falhar');
+} catch (\App\Core\ValidationException $erroJanela) {
+    $t->verdadeiro(str_contains($erroJanela->getMessage(), 'unificado'), 'A retratação só admite o unificado');
+}
+$conferencia->registrar($empresaConf, ['de' => '2026-10', 'ate' => '2026-10', 'rbt12' => '180000,00', 'escolha' => 'unificado'], '2026-11-10');
+$gravada = $banco->one('SELECT escolha, retratacao_ate FROM decisoes_regime WHERE empresa_id = :id ORDER BY id DESC LIMIT 1', [':id' => $id]);
+$t->igual('unificado', $gravada['escolha'] ?? '', 'A permanência no DAS fica gravada');
+$t->igual('2026-11-30', $gravada['retratacao_ate'] ?? '', 'O registro guarda até quando dá para voltar atrás');
+
+$acesso = new \App\App\AcessoService($banco);
+try {
+    $acesso->entrar(['email' => 'dono@escritorio.local', 'senha' => 'errada']);
+    $t->verdadeiro(false, 'Senha errada deveria falhar');
+} catch (\App\Core\ValidationException $erroAcesso) {
+    $t->verdadeiro(str_contains($erroAcesso->getMessage(), 'não conferem'), 'Senha errada não entra');
+}
+$admin = $acesso->entrar(['email' => 'admin', 'senha' => 'admin']);
+$t->igual('plataforma', $admin['papel'], 'O acesso admin entra na plataforma');
+$dono = $acesso->entrar(['email' => 'dono@escritorio.local', 'senha' => 'primeiro-acesso']);
+$t->igual('plataforma', $dono['papel'], 'O primeiro acesso opera a plataforma');
+$outro = $banco->insert('escritorios', [
+    'nome' => 'Outro Escritório', 'cnpj' => '11222333000181', 'crc' => '', 'cor' => '#1f4b3a',
+    'logo_path' => null, 'cidade' => '', 'telefone' => '', 'email' => 'outro@escritorio.local',
+]);
+$banco->insert('assinaturas', [
+    'escritorio_id' => $outro, 'plano_codigo' => 'essencial', 'status' => 'ativa',
+    'inicio' => '2026-11-01', 'criada_em' => '2026-11-01 00:00:00',
+]);
+$banco->run('UPDATE planos SET empresas_por_ciclo = 1 WHERE codigo = :codigo', [':codigo' => 'essencial']);
+\App\Core\Tenant::definir((int) $outro);
+$saas = new \App\App\AssinaturaService($banco);
+$limitado = new \App\App\CompanyService($banco, new \App\App\LedgerService($banco), $saas);
+$t->igual([], $limitado->empresas(), 'Outro escritório não vê a carteira da Padaria');
+$t->verdadeiro($limitado->salvar(null, [
+    'razao_social' => 'Cliente Um', 'cnpj' => '11222333000181', 'regime' => 'simples', 'anexo_simples' => 'I', 'capital_social' => '1000,00',
+]) > 0, 'A primeira empresa do plano cabe');
+try {
+    $limitado->salvar(null, [
+        'razao_social' => 'Cliente Dois', 'cnpj' => '34028316000103', 'regime' => 'simples', 'anexo_simples' => 'I', 'capital_social' => '1000,00',
+    ]);
+    $t->verdadeiro(false, 'A segunda empresa deveria estourar o plano');
+} catch (\App\Core\ValidationException $erroPlano) {
+    $t->verdadeiro(str_contains($erroPlano->getMessage(), 'Essencial'), 'O teto do plano Essencial barra a empresa');
+}
+$contaSaas = $saas->apurar((int) $outro);
+$t->igual(49000, $contaSaas['preco_centavos'], 'A mensalidade do Essencial sai da tabela');
+$faturaDeNovo = $saas->apurar((int) $outro);
+$t->igual($contaSaas['fatura']['id'], $faturaDeNovo['fatura']['id'], 'A fatura do mês não duplica');
+\App\Core\Tenant::limpar();
+$banco->run('UPDATE planos SET empresas_por_ciclo = 15 WHERE codigo = :codigo', [':codigo' => 'essencial']);
+
 echo $t->passou . " testes passaram";
 if ($t->falhou > 0) {
     echo ", " . $t->falhou . " falharam\n";

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Agents\Agentes\AuditorEquacaoAgente;
 use App\Agents\Orchestrators\SanityReverseAuditor;
+use App\Agents\RegistroDeAgente;
 use App\Core\Database;
 use App\Core\Format;
 use App\Core\ReportBlockedException;
@@ -20,11 +22,19 @@ final class ReportService
     public function parecer(int $empresaId, bool $emitir): array
     {
         $empresa = $this->db->one('SELECT * FROM empresas WHERE id = :id', [':id' => $empresaId]);
-        $escritorio = $this->db->one('SELECT * FROM escritorios ORDER BY id LIMIT 1') ?? [];
+        $escritorio = $this->db->one('SELECT * FROM escritorios WHERE id = :id', [':id' => $empresa['escritorio_id']]) ?? [];
         $simulacao = $this->estrategia->ultima($empresaId);
         $auditor = new SanityReverseAuditor($this->db);
         $competencia = $simulacao['competencia'] ?? null;
         $saude = $auditor->auditar($empresaId, is_string($competencia) ? $competencia : null);
+        $contrato = AuditorEquacaoAgente::contrato();
+        RegistroDeAgente::gravar($this->db, (string) $contrato['id'], (string) $contrato['ferramenta'], $empresaId, [
+            'competencia' => is_string($competencia) ? $competencia : '',
+        ], [
+            'aprovado' => $saude['aprovado'],
+            'bloqueios' => count($saude['bloqueios']),
+            'alertas' => count($saude['alertas']),
+        ], 'deterministico');
         $pacote = [
             'empresa' => $empresa,
             'escritorio' => $escritorio,
@@ -32,7 +42,7 @@ final class ReportService
             'saude' => $saude,
         ];
         if ($emitir && !$saude['aprovado']) {
-            throw new ReportBlockedException('O auditor reverso bloqueou a emissão. Resolva os itens rejeitados, ambíguos ou o desequilíbrio do razão antes de gerar o PDF.');
+            throw new ReportBlockedException('O auditor da equação bloqueou a emissão. Resolva os itens rejeitados, ambíguos ou o desequilíbrio do razão antes de gerar o PDF.');
         }
         return $pacote;
     }

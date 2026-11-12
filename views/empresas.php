@@ -2,6 +2,7 @@
   <form class="card pilha" method="post" action="/empresas">
     <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
     <h2>Nova empresa</h2>
+    <p>O cadastro abre as contas. Você não precisa montar o plano.</p>
     <div class="grade-form">
       <label>Razão social<input name="razao_social" required></label>
       <label>Nome fantasia<input name="nome_fantasia"></label>
@@ -20,7 +21,7 @@
       <label>Anexo do Simples
         <select name="anexo_simples">
           <?php foreach (['I','II','III','IV','V','AUTO'] as $anexo): ?>
-            <option value="<?= $anexo ?>"><?= $anexo === 'AUTO' ? 'Pelo Fator R' : 'Anexo ' . $anexo ?></option>
+            <option value="<?= $anexo ?>"><?= $anexo === 'AUTO' ? 'Pela folha' : 'Anexo ' . $anexo ?></option>
           <?php endforeach; ?>
         </select>
       </label>
@@ -42,7 +43,7 @@
         <?php foreach ($listaEmpresas as $item): ?>
           <tr>
             <td><?= e($item['razao_social']) ?><div class="sub"><?= \App\Core\Format::documento((string) $item['cnpj']) ?></div></td>
-            <td><?= e((string) $item['regime']) ?></td>
+            <td><?= e(\App\Core\Format::rotulo((string) $item['regime'])) ?></td>
             <td><a href="/empresas/<?= e((string) $item['id']) ?>">Abrir</a></td>
           </tr>
         <?php endforeach; ?>

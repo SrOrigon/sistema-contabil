@@ -1,25 +1,25 @@
 <?php /** @var list<array<string,mixed>> $documentos */ /** @var string $filtro */ ?>
 <?php if ($empresa === null): ?>
-  <section class="card vazio"><p>Selecione uma empresa para auditar notas.</p><a class="btn" href="/empresas">Cadastrar</a></section>
+  <section class="card vazio"><p>Cadastre a empresa antes de enviar as notas.</p><a class="btn" href="/empresas">Cadastrar empresa</a></section>
 <?php else: ?>
   <form class="card drop" data-drop method="post" action="/auditoria/upload" enctype="multipart/form-data">
     <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
-    <h2>Lote de documentos</h2>
-    <p>NF-e, NFC-e, CT-e, NFS-e, SPED ou ZIP. O parser lê em fluxo, o validador cruza NCM, CST e cClassTrib, e o razão recebe a nota quando o CNPJ da empresa é emitente ou destinatário.</p>
+    <h2>Enviar as notas do mês</h2>
+    <p>Solte aqui os arquivos da pasta do mês, ou um zip com todos eles. Uma nota com defeito não atrapalha as outras. O sistema lê, confere e lança quando o CNPJ da empresa está na nota.</p>
     <input type="file" name="arquivos[]" multiple accept=".xml,.txt,.sped,.zip" required>
-    <button type="submit">Auditar lote</button>
+    <button type="submit">Enviar e conferir</button>
   </form>
-  <div class="acoes" style="margin:16px 0">
-    <a class="btn secundario pequeno" href="/auditoria">Todos</a>
-    <a class="btn secundario pequeno" href="/auditoria?status=rejeitado">Rejeitados</a>
-    <a class="btn secundario pequeno" href="/auditoria?status=ambiguo">Ambíguos</a>
-    <a class="btn secundario pequeno" href="/auditoria?status=alerta">Alertas</a>
-    <a class="btn secundario pequeno" href="/auditoria?status=conforme">Conformes</a>
-    <a class="btn secundario pequeno" href="/auditoria/csv">Exportar CSV</a>
+  <div class="acoes">
+    <a class="btn secundario pequeno" href="/auditoria">Todas</a>
+    <a class="btn secundario pequeno" href="/auditoria?status=rejeitado">Com erro</a>
+    <a class="btn secundario pequeno" href="/auditoria?status=ambiguo">Em dúvida</a>
+    <a class="btn secundario pequeno" href="/auditoria?status=alerta">Para olhar</a>
+    <a class="btn secundario pequeno" href="/auditoria?status=conforme">Certas</a>
+    <a class="btn secundario pequeno" href="/auditoria/csv">Baixar planilha</a>
   </div>
   <section class="card">
     <table>
-      <thead><tr><th>Documento</th><th>Emissão</th><th>Partes</th><th>Valor</th><th>IBS/CBS</th><th>Status</th></tr></thead>
+      <thead><tr><th>Nota</th><th>Data</th><th>Quem</th><th>Valor</th><th>Imposto novo</th><th>Situação</th></tr></thead>
       <tbody>
       <?php foreach ($documentos as $documento): ?>
         <tr>
@@ -33,6 +33,6 @@
       <?php endforeach; ?>
       </tbody>
     </table>
-    <?php if ($documentos === []): ?><p class="vazio">Nenhum documento<?= $filtro !== '' ? ' com esse status' : '' ?>. Os XMLs de ensaio ficam na pasta exemplos, fora do sistema, e passam pelo mesmo motor.</p><?php endif; ?>
+    <?php if ($documentos === []): ?><p class="vazio">Nenhuma nota<?= $filtro !== '' ? ' neste filtro' : ' desta empresa' ?>.</p><?php endif; ?>
   </section>
 <?php endif; ?>

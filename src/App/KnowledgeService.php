@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Agents\Agentes\ConsultorArtigoAgente;
 use App\Agents\Llm\LlmClient;
+use App\Agents\RegistroDeAgente;
 use App\Core\Database;
 use App\Core\ValidationException;
 use App\KnowledgeBase\HybridLawSearcher;
@@ -26,25 +28,40 @@ final class KnowledgeService
     /** @return array{resposta:string, modelo:string, trechos:list<array<string,mixed>>} */
     public function responder(string $pergunta, string $competencia, ?int $empresaId): array
     {
+        $leitura = ConsultorArtigoAgente::ler($pergunta, $competencia);
+        if (!$leitura['ok']) {
+            $contrato = ConsultorArtigoAgente::contrato();
+            RegistroDeAgente::gravar($this->db, (string) $contrato['id'], (string) $contrato['ferramenta'], $empresaId, [
+                'pergunta' => $pergunta,
+                'competencia' => $competencia,
+            ], [
+                'resposta' => $leitura['mensagem'],
+            ], 'variavel');
+            return ['resposta' => $leitura['mensagem'], 'modelo' => 'variavel', 'trechos' => []];
+        }
+        $pergunta = (string) $leitura['valores']['consulta'];
+        $competencia = (string) $leitura['valores']['competencia'];
         $trechos = $this->pesquisar($pergunta, $competencia);
         $llm = $this->config->llm();
-        $redacao = $llm->redigirParecer($pergunta, $trechos);
+        $redacao = null;
+        if (ConsultorArtigoAgente::deveRedigir(count($trechos))) {
+            $redacao = $llm->redigirParecer($pergunta, $trechos);
+        }
         if ($redacao === null || trim($redacao) === '') {
             $redacao = $this->respostaLocal($pergunta, $trechos, $competencia);
             $modelo = 'deterministico';
         } else {
             $modelo = $llm->modelo();
         }
-        $this->db->insert('agent_logs', [
-            'empresa_id' => $empresaId,
-            'agente' => 'consultor-tributario',
-            'acao' => 'consultar_artigo_lei',
-            'entrada' => json_encode(['pergunta' => $pergunta, 'competencia' => $competencia], JSON_UNESCAPED_UNICODE),
-            'saida' => json_encode(['resposta' => $redacao, 'trechos' => count($trechos)], JSON_UNESCAPED_UNICODE),
-            'ferramentas' => 'consultar_artigo_lei',
-            'modelo' => $modelo,
-            'criado_em' => date('Y-m-d H:i:s'),
-        ]);
+        $contrato = ConsultorArtigoAgente::contrato();
+        RegistroDeAgente::gravar($this->db, (string) $contrato['id'], (string) $contrato['ferramenta'], $empresaId, [
+            'pergunta' => $pergunta,
+            'competencia' => $competencia,
+            'variaveis_usadas' => $leitura['usadas'],
+        ], [
+            'resposta' => $redacao,
+            'trechos' => count($trechos),
+        ], $modelo);
         return ['resposta' => $redacao, 'modelo' => $modelo, 'trechos' => $trechos];
     }
 

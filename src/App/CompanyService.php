@@ -6,28 +6,35 @@ namespace App\App;
 
 use App\Core\Database;
 use App\Core\Format;
+use App\Core\Tenant;
 use App\Core\ValidationException;
 
 final class CompanyService
 {
-    public function __construct(private readonly Database $db, private readonly LedgerService $razao)
-    {
+    public function __construct(
+        private readonly Database $db,
+        private readonly LedgerService $razao,
+        private readonly ?AssinaturaService $assinaturas = null,
+    ) {
     }
 
     public function escritorio(): array
     {
-        return $this->db->one('SELECT * FROM escritorios ORDER BY id LIMIT 1') ?? [];
+        return $this->db->one('SELECT * FROM escritorios WHERE id = :id', [':id' => $this->escritorioId()]) ?? [];
     }
 
     /** @return list<array<string, mixed>> */
     public function empresas(): array
     {
-        return $this->db->all('SELECT * FROM empresas ORDER BY razao_social');
+        return $this->db->all('SELECT * FROM empresas WHERE escritorio_id = :id ORDER BY razao_social', [':id' => $this->escritorioId()]);
     }
 
     public function obter(int $id): ?array
     {
-        return $this->db->one('SELECT * FROM empresas WHERE id = :id', [':id' => $id]);
+        return $this->db->one('SELECT * FROM empresas WHERE id = :id AND escritorio_id = :escritorio', [
+            ':id' => $id,
+            ':escritorio' => $this->escritorioId(),
+        ]);
     }
 
     /** @param array<string, string> $dados */
@@ -67,11 +74,18 @@ final class CompanyService
             'ativa' => 1,
         ];
         if ($id === null) {
+            if ($this->assinaturas !== null) {
+                $this->assinaturas->exigirVaga($this->escritorioId());
+            }
             $registro['criada_em'] = date('Y-m-d H:i:s');
             $novo = $this->db->insert('empresas', $registro);
             $this->razao->garantirPlano($novo);
             $this->razao->abertura($novo, $registro['capital_social_centavos'], $registro['inicio_atividade'] ?: date('Y-m-d'));
             return $novo;
+        }
+        $atual = $this->obter($id);
+        if ($atual === null) {
+            throw new ValidationException('Empresa não encontrada neste escritório.');
         }
         $sets = [];
         $params = [':id' => $id];
@@ -82,13 +96,16 @@ final class CompanyService
             $sets[] = $coluna . ' = :' . $coluna;
             $params[':' . $coluna] = $valor;
         }
-        $this->db->run('UPDATE empresas SET ' . implode(', ', $sets) . ' WHERE id = :id', $params);
+        $this->db->run('UPDATE empresas SET ' . implode(', ', $sets) . ' WHERE id = :id AND escritorio_id = :escritorio', $params + [':escritorio' => $this->escritorioId()]);
         $this->razao->garantirPlano($id);
         return $id;
     }
 
     public function excluir(int $id): void
     {
+        if ($this->obter($id) === null) {
+            throw new ValidationException('Empresa não encontrada neste escritório.');
+        }
         $this->db->transaction(function () use ($id): void {
             $documentos = $this->db->all('SELECT id FROM documentos_fiscais WHERE empresa_id = :id', [':id' => $id]);
             foreach ($documentos as $documento) {
@@ -111,6 +128,9 @@ final class CompanyService
     /** @param array<string, string> $dados */
     public function salvarPessoa(int $empresaId, array $dados): void
     {
+        if ($this->obter($empresaId) === null) {
+            throw new ValidationException('Empresa não encontrada neste escritório.');
+        }
         $documento = Format::digitos($dados['documento'] ?? '');
         $valido = strlen($documento) === 14 ? Format::cnpjValido($documento) : Format::cpfValido($documento);
         if (!$valido) {
@@ -137,13 +157,26 @@ final class CompanyService
 
     public function excluirPessoa(int $id): void
     {
-        $this->db->run('DELETE FROM pessoas WHERE id = :id', [':id' => $id]);
+        $this->db->run(
+            'DELETE FROM pessoas WHERE id = :id AND empresa_id IN (SELECT id FROM empresas WHERE escritorio_id = :escritorio)',
+            [':id' => $id, ':escritorio' => $this->escritorioId()],
+        );
     }
 
     /** @return list<array<string, mixed>> */
     public function pessoas(int $empresaId): array
     {
         return $this->db->all('SELECT * FROM pessoas WHERE empresa_id = :id ORDER BY nome', [':id' => $empresaId]);
+    }
+
+    private function escritorioId(): int
+    {
+        $definido = Tenant::id();
+        if ($definido !== null) {
+            return $definido;
+        }
+        $primeiro = $this->db->one('SELECT id FROM escritorios ORDER BY id LIMIT 1');
+        return (int) ($primeiro['id'] ?? 0);
     }
 
     private function data(string $valor): string

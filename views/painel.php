@@ -2,43 +2,52 @@
 <?php if ($empresa === null): ?>
   <section class="card vazio">
     <?php if (!empty($temEmpresas)): ?>
-      <h2>Nenhuma empresa está ativa nesta sessão</h2>
-      <p>Escolha o CNPJ no seletor ao lado para abrir o plano de contas, a auditoria e a conciliação.</p>
+      <h2>Escolha a empresa</h2>
+      <p>Use a lista ao lado. Com uma empresa só, ela já entra sozinha.</p>
     <?php else: ?>
-      <h2>O escritório ainda não tem empresa</h2>
-      <p>Cadastre o primeiro CNPJ para abrir o plano de contas, auditar notas e conciliar o banco.</p>
+      <h2>Comece por uma empresa</h2>
+      <p>Cadastre o primeiro cliente. As contas nascem junto com o cadastro.</p>
       <a class="btn" href="/empresas">Cadastrar empresa</a>
     <?php endif; ?>
   </section>
 <?php else: ?>
   <section class="grade">
-    <article class="card"><div class="rotulo">Tarefas abertas</div><div class="numero"><?= count($tarefas) ?></div></article>
-    <article class="card"><div class="rotulo">Documentos recentes</div><div class="numero"><?= count($documentos) ?></div></article>
-    <article class="card"><div class="rotulo">Contas bancárias</div><div class="numero"><?= count($contas) ?></div></article>
-    <article class="card"><div class="rotulo">Diferença patrimonial</div><div class="numero"><?= \App\Core\Format::money((int) ($equacao['diferenca_centavos'] ?? 0)) ?></div></article>
+    <a class="card" href="/auditoria"><div class="rotulo">Enviar notas</div><div class="numero"><?= count($documentos) ?></div><p class="sub">Notas já lidas</p></a>
+    <a class="card" href="/conferencia"><div class="rotulo">Conferir o mês</div><div class="numero"><?= count($tarefas) ?></div><p class="sub">Pendências</p></a>
+    <a class="card" href="/conciliacao"><div class="rotulo">Banco</div><div class="numero"><?= count($contas) ?></div><p class="sub">Contas cadastradas</p></a>
+    <a class="card" href="/contabil"><div class="rotulo">As contas fecham</div><div class="numero"><?= \App\Core\Format::money((int) ($equacao['diferenca_centavos'] ?? 0)) ?></div><p class="sub">Diferença, se houver</p></a>
   </section>
-  <div class="duas-colunas" style="margin-top:16px">
+  <div class="duas-colunas">
     <section class="card">
-      <h2>Fila do contador</h2>
+      <h2>Para resolver</h2>
       <?php if ($tarefas === []): ?>
-        <p class="vazio">Nada pendente. Importe um lote em Auditoria ou um extrato em Conciliação.</p>
+        <p class="vazio">Nada pendente. O próximo passo é enviar as notas do mês ou o extrato do banco.</p>
+        <p><a class="btn" href="/auditoria">Enviar notas</a></p>
       <?php else: ?>
         <div class="lista">
           <?php foreach ($tarefas as $tarefa): ?>
-            <div class="item-lista">
+            <?php
+              $destino = match ((string) ($tarefa['tipo'] ?? '')) {
+                  'conciliacao' => '/conciliacao',
+                  default => (string) ($tarefa['referencia_tipo'] ?? '') === 'documento'
+                      ? '/documentos/' . (int) $tarefa['referencia_id']
+                      : '/auditoria',
+              };
+            ?>
+            <a class="item-lista" href="<?= e($destino) ?>">
               <div><strong><?= e($tarefa['titulo']) ?></strong><div class="sub"><?= e($tarefa['detalhe']) ?></div></div>
-            </div>
+            </a>
           <?php endforeach; ?>
         </div>
       <?php endif; ?>
     </section>
     <section class="card">
-      <h2>Caixa e bancos</h2>
+      <h2>Dinheiro no banco</h2>
       <?php foreach ($contas as $conta): ?>
         <div class="item-lista"><span><?= e($conta['apelido']) ?></span><strong class="num"><?= \App\Core\Format::money((int) $conta['saldo_centavos']) ?></strong></div>
       <?php endforeach; ?>
-      <?php if ($contas === []): ?><p class="vazio">Nenhuma conta bancária.</p><?php endif; ?>
-      <p><a class="btn pequeno" href="/auditoria">Auditar notas</a> <a class="btn pequeno secundario" href="/conciliacao">Conciliar</a></p>
+      <?php if ($contas === []): ?><p class="vazio">Nenhuma conta ainda. O extrato entra em Banco.</p><?php endif; ?>
+      <p><a class="btn pequeno" href="/conferencia">Ver o mês</a> <a class="btn pequeno secundario" href="/relatorios">Abrir o parecer</a></p>
     </section>
   </div>
 <?php endif; ?>

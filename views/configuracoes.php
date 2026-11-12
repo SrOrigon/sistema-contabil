@@ -10,7 +10,7 @@
     <label>Cidade<input name="cidade" value="<?= e((string) $escritorio['cidade']) ?>"></label>
     <label>Telefone<input name="telefone" value="<?= e((string) $escritorio['telefone']) ?>"></label>
     <label>E-mail<input name="email" value="<?= e((string) $escritorio['email']) ?>"></label>
-    <label>Cor da barra<input name="cor" value="<?= e((string) $escritorio['cor']) ?>"></label>
+    <label>Cor do menu<input type="color" name="cor" value="<?= e((string) $escritorio['cor']) ?>"></label>
     <button type="submit">Salvar escritório</button>
   </form>
   <form class="card pilha" method="post" enctype="multipart/form-data">
@@ -19,14 +19,16 @@
     <h2>Marca</h2>
     <input type="file" name="logo" accept=".png,.jpg,.jpeg,.svg,.webp" required>
     <button type="submit">Enviar marca</button>
-    <h2>Modelo de linguagem</h2>
   </form>
+  <details class="tecnico">
+    <summary>Ajustes técnicos</summary>
   <form class="card pilha" method="post">
+    <h2>Modelo de linguagem</h2>
     <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
     <input type="hidden" name="_acao" value="ia">
     <label>Provedor
       <select name="ai_provedor">
-        <option value="" <?= $config['provedor'] === '' ? 'selected' : '' ?>>Somente motor determinístico</option>
+        <option value="" <?= $config['provedor'] === '' ? 'selected' : '' ?>>Sem modelo de linguagem</option>
         <option value="gemini" <?= $config['provedor'] === 'gemini' ? 'selected' : '' ?>>Gemini</option>
         <option value="openai" <?= $config['provedor'] === 'openai' ? 'selected' : '' ?>>Compatível com OpenAI</option>
       </select>
@@ -39,18 +41,21 @@
   <form class="card pilha" method="post">
     <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
     <input type="hidden" name="_acao" value="pluggy">
-    <h2>Open Finance</h2>
-    <p class="sub">O webhook local é <code>/webhooks/open-finance</code>. Sem token, ele aceita chamada local para os testes. Com token, exige o cabeçalho X-Webhook-Token.</p>
+    <h2>Conexão com o banco</h2>
+    <p class="sub">Preencha só se o escritório for buscar o extrato direto no banco. O envio do arquivo continua valendo sem isso.</p>
     <label>Client ID<input name="pluggy_client_id" value="<?= e((string) $config['pluggy_id']) ?>"></label>
     <label>Client secret <?= $config['tem_pluggy'] ? '(guardado)' : '' ?><input type="password" name="pluggy_client_secret" autocomplete="off"></label>
     <label>URL<input name="pluggy_base_url" value="<?= e((string) $config['pluggy_url']) ?>"></label>
     <label>Token do webhook <?= $config['webhook'] ? '(guardado, preencha só para trocar)' : '' ?><input name="webhook_token"></label>
-    <button type="submit">Salvar Open Finance</button>
+    <button type="submit">Salvar conexão</button>
   </form>
+  </details>
 </div>
-<section class="card" style="margin-top:16px">
-  <h2>Alíquotas de referência</h2>
-  <p class="sub">2026 é alíquota legal de teste. De 2027 em diante o número é estimativa até o Senado fixar. Edite o ano aqui; o motor usa a linha gravada.</p>
+<details class="tecnico">
+<summary>Tabelas usadas no cálculo</summary>
+<section class="card">
+  <h2>Alíquotas de cada ano</h2>
+  <p class="sub">2026 usa a alíquota de teste prevista em lei. De 2027 em diante o número é estimativa, até sair o valor oficial. O que você gravar aqui é o que o cálculo usa.</p>
   <table>
     <thead><tr><th>Ano</th><th>CBS</th><th>IBS</th><th>Natureza</th><th>Observação</th></tr></thead>
     <tbody>
@@ -65,13 +70,13 @@
     <?php endforeach; ?>
     </tbody>
   </table>
-  <form method="post" class="grade-form" style="margin-top:12px">
+  <form method="post" class="grade-form">
     <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
     <input type="hidden" name="_acao" value="aliquota">
     <label>Ano<input name="ano" required></label>
     <label>CBS %<input name="cbs" required></label>
     <label>IBS %<input name="ibs" required></label>
-    <label>Fator ICMS/ISS<input name="fator_icms_iss" value="1"></label>
+    <label>Redução de ICMS e ISS<input name="fator_icms_iss" value="1"></label>
     <label>Observação<input name="observacao"></label>
     <label>Natureza<select name="natureza"><option value="estimada">Estimada</option><option value="legal">Legal</option></select></label>
     <label><input type="checkbox" name="pis_cofins_vigente" value="1"> PIS/Cofins vigente</label>
@@ -80,21 +85,21 @@
     <button type="submit">Gravar ano</button>
   </form>
 </section>
-<div class="duas-colunas" style="margin-top:16px">
+<div class="duas-colunas">
   <section class="card">
-    <h2>cClassTrib</h2>
-    <p class="sub"><?= count($cclass) ?> código(s). <?= $config['tabela_completa'] ? 'Tabela marcada como oficial completa: código ausente bloqueia.' : 'Tabela ainda parcial: código ausente gera alerta.' ?> <a href="/configuracoes/modelo-cclass.csv">Baixar modelo</a></p>
+    <h2>Classificação dos produtos</h2>
+    <p class="sub"><?= count($cclass) === 1 ? '1 código' : count($cclass) . ' códigos' ?>. <?= $config['tabela_completa'] ? 'Tabela completa: código que falta bloqueia a nota.' : 'Tabela ainda parcial: código que falta vira aviso.' ?> <a href="/configuracoes/modelo-cclass.csv">Baixar o modelo</a></p>
     <form method="post" enctype="multipart/form-data" class="pilha">
       <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
       <input type="hidden" name="_acao" value="cclass">
       <input type="file" name="csv" accept=".csv,.txt" required>
       <label><input type="checkbox" name="oficial_completa" value="1"> Esta importação completa a tabela oficial</label>
-      <button type="submit">Importar cClassTrib</button>
+      <button type="submit">Importar a tabela</button>
     </form>
   </section>
   <section class="card">
-    <h2>Regras de NCM</h2>
-    <p class="sub"><?= count($regras) ?> regras. Palavras no CSV separam por barra vertical. <a href="/configuracoes/modelo-regras.csv">Baixar modelo</a></p>
+    <h2>Regras por produto</h2>
+    <p class="sub"><?= count($regras) ?> regras. <a href="/configuracoes/modelo-regras.csv">Baixar modelo</a></p>
     <form method="post" enctype="multipart/form-data" class="pilha">
       <input type="hidden" name="_csrf" value="<?= e($csrf) ?>">
       <input type="hidden" name="_acao" value="regras">
@@ -103,3 +108,4 @@
     </form>
   </section>
 </div>
+</details>

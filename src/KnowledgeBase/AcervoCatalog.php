@@ -81,6 +81,32 @@ final class AcervoCatalog
         return $saida;
     }
 
+    /** @return list<array{caminho: string, corpo: string}> */
+    public function textosComCaminho(string $trecho): array
+    {
+        $pdo = $this->conectar();
+        if ($pdo === null || $trecho === '') {
+            return [];
+        }
+        try {
+            $consulta = $pdo->prepare(
+                'SELECT n.caminho, f.corpo FROM normas n JOIN normas_fts f ON f.rowid = n.id WHERE n.caminho LIKE :trecho ORDER BY n.caminho'
+            );
+            $consulta->execute([':trecho' => $trecho]);
+            $linhas = $consulta->fetchAll(\PDO::FETCH_ASSOC);
+        } catch (\PDOException) {
+            return [];
+        }
+        $saida = [];
+        foreach ($linhas as $linha) {
+            $saida[] = [
+                'caminho' => (string) $linha['caminho'],
+                'corpo' => (string) $linha['corpo'],
+            ];
+        }
+        return $saida;
+    }
+
     public function conectar(bool $criar = false): ?\PDO
     {
         $caminho = self::banco();

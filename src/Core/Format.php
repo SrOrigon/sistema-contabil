@@ -126,6 +126,33 @@ final class Format
         return $resto < 2 ? 0 : 11 - $resto;
     }
 
+    public static function rotulo(string $codigo): string
+    {
+        return [
+            'simples' => 'Simples Nacional',
+            'mei' => 'MEI',
+            'presumido' => 'Lucro presumido',
+            'real' => 'Lucro real',
+            'ativa' => 'Ativa',
+            'suspensa' => 'Suspensa',
+            'aberta' => 'Em aberto',
+            'paga' => 'Recebida',
+            'plataforma' => 'Plataforma',
+            'dono' => 'Dono',
+            'contador' => 'Contador',
+            'cliente' => 'Cliente',
+            'fornecedor' => 'Fornecedor',
+            'ambos' => 'Cliente e fornecedor',
+            'essencial' => 'Essencial',
+            'profissional' => 'Profissional',
+            'avancado' => 'Avançado',
+            'unificado' => 'No Simples',
+            'hibrido' => 'Com imposto destacado',
+            'estimada' => 'Estimativa',
+            'legal' => 'Legal',
+        ][$codigo] ?? $codigo;
+    }
+
     public static function texto(string $valor): string
     {
         $valor = mb_strtolower(trim($valor));

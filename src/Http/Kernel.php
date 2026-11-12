@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\Http;
 
+use App\App\AcessoService;
+use App\App\AssinaturaService;
 use App\App\AuditService;
 use App\App\BankService;
 use App\App\CompanyService;
+use App\App\ConferenciaService;
 use App\App\KnowledgeService;
 use App\App\LedgerService;
 use App\App\ReportService;
@@ -17,6 +20,7 @@ use App\Core\Format;
 use App\Core\InvalidXmlException;
 use App\Core\ReportBlockedException;
 use App\Core\Request;
+use App\Core\Tenant;
 use App\Core\ValidationException;
 use App\Core\View;
 
@@ -28,19 +32,27 @@ final class Kernel
     private LedgerService $razao;
     private KnowledgeService $leis;
     private StrategyService $estrategia;
+    private ConferenciaService $conferencia;
     private ReportService $relatorios;
     private SettingsService $config;
+    private AcessoService $acesso;
+    private AssinaturaService $assinaturas;
     private View $view;
+    /** @var ?array<string, mixed> */
+    private ?array $usuario = null;
 
     public function __construct(private readonly Database $db)
     {
         $this->config = new SettingsService($db);
+        $this->acesso = new AcessoService($db);
+        $this->assinaturas = new AssinaturaService($db);
         $this->razao = new LedgerService($db);
-        $this->empresas = new CompanyService($db, $this->razao);
+        $this->empresas = new CompanyService($db, $this->razao, $this->assinaturas);
         $this->auditoria = new AuditService($db, $this->razao, $this->config);
         $this->bancos = new BankService($db, $this->razao, $this->config);
         $this->leis = new KnowledgeService($db, $this->config);
         $this->estrategia = new StrategyService($db, $this->config);
+        $this->conferencia = new ConferenciaService($db, $this->config);
         $this->relatorios = new ReportService($db, $this->estrategia);
         $this->view = new View(ROOT . '/views');
     }
@@ -70,6 +82,11 @@ final class Kernel
     {
         $metodo = $request->method();
         $caminho = $request->path();
+        if ($this->rotaPublica($metodo, $caminho)) {
+            $this->publico($metodo, $caminho, $request);
+            return;
+        }
+        $this->exigirUsuario($caminho);
         if ($metodo === 'GET' && $caminho === '/') {
             $this->painel();
             return;
@@ -100,7 +117,7 @@ final class Kernel
         if ($metodo === 'GET' && $caminho === '/auditoria') {
             $empresa = $this->empresaAtual();
             $this->pagina('auditoria', [
-                'titulo' => 'Auditoria fiscal',
+                'titulo' => 'Notas',
                 'documentos' => $empresa ? $this->auditoria->documentos((int) $empresa['id'], $request->query('status')) : [],
                 'filtro' => $request->query('status'),
             ], 'auditoria');
@@ -128,7 +145,7 @@ final class Kernel
         }
         if ($metodo === 'POST' && preg_match('#^/documentos/(\d+)/direcao$#', $caminho, $m)) {
             $this->auditoria->definirDirecao((int) $m[1], $request->input('direcao'));
-            $this->flash('ok', 'Direção definida e lançamento gravado no razão.');
+            $this->flash('ok', 'Direção definida e lançamento gravado em Livros.');
             $this->redirect('/documentos/' . $m[1]);
         }
         if ($metodo === 'POST' && preg_match('#^/itens/(\d+)/corrigir$#', $caminho, $m)) {
@@ -148,7 +165,7 @@ final class Kernel
         }
         if ($metodo === 'POST' && preg_match('#^/conciliacoes/(\d+)/confirmar$#', $caminho, $m)) {
             $this->bancos->confirmar((int) $m[1]);
-            $this->flash('ok', 'Conciliação confirmada e lançada no razão.');
+            $this->flash('ok', 'Conferência confirmada e lançada em Livros.');
             $this->redirect('/conciliacao');
         }
         if ($metodo === 'POST' && preg_match('#^/conciliacoes/(\d+)/rejeitar$#', $caminho, $m)) {
@@ -163,8 +180,27 @@ final class Kernel
         }
         if ($metodo === 'POST' && preg_match('#^/transacoes/(\d+)/lancar$#', $caminho, $m)) {
             $this->bancos->lancarManual((int) $m[1], $request->input('conta'));
-            $this->flash('ok', 'Lançamento manual gravado no razão.');
+            $this->flash('ok', 'Lançamento manual gravado em Livros.');
             $this->redirect('/conciliacao');
+        }
+        if ($caminho === '/conferencia') {
+            $this->conferencia($metodo, $request);
+            return;
+        }
+        if ($caminho === '/assinatura') {
+            $this->assinatura($metodo, $request);
+            return;
+        }
+        if ($caminho === '/plataforma' || str_starts_with($caminho, '/plataforma/')) {
+            $this->plataforma($metodo, $caminho, $request);
+            return;
+        }
+        if ($metodo === 'POST' && $caminho === '/sair') {
+            $_SESSION = [];
+            session_destroy();
+            session_start();
+            $_SESSION['csrf'] = bin2hex(random_bytes(16));
+            $this->redirect('/entrar');
         }
         if ($caminho === '/estrategia') {
             $this->estrategia($metodo, $request);
@@ -181,10 +217,11 @@ final class Kernel
         if ($caminho === '/agentes' && $metodo === 'GET') {
             $empresa = $this->empresaAtual();
             $this->pagina('agentes', [
-                'titulo' => 'Agentes',
+                'titulo' => 'O que o sistema faz',
                 'logs' => $this->leis->logs($empresa ? (int) $empresa['id'] : null),
                 'llm' => $this->config->llm()->configurado(),
                 'modelo' => $this->config->llm()->modelo(),
+                'catalogo' => \App\Agents\AgentCatalog::todos(),
             ], 'agentes');
             return;
         }
@@ -228,10 +265,181 @@ final class Kernel
         $this->falha(404, 'Página não encontrada.');
     }
 
+    private function rotaPublica(string $metodo, string $caminho): bool
+    {
+        if ($caminho === '/entrar' && in_array($metodo, ['GET', 'POST'], true)) {
+            return true;
+        }
+        if ($caminho === '/criar-escritorio' && in_array($metodo, ['GET', 'POST'], true)) {
+            return true;
+        }
+        return $metodo === 'GET' && $caminho === '/saude' || $metodo === 'POST' && $caminho === '/webhooks/open-finance';
+    }
+
+    private function publico(string $metodo, string $caminho, Request $request): void
+    {
+        if ($caminho === '/entrar') {
+            $this->entrar($metodo, $request);
+            return;
+        }
+        if ($caminho === '/criar-escritorio') {
+            $this->criarEscritorio($metodo, $request);
+            return;
+        }
+        if ($metodo === 'GET' && $caminho === '/saude') {
+            header('Content-Type: application/json; charset=UTF-8');
+            echo json_encode([
+                'php' => PHP_VERSION,
+                'banco' => $this->db->driver(),
+                'extensoes' => [
+                    'bcmath' => extension_loaded('bcmath'),
+                    'curl' => extension_loaded('curl'),
+                    'pdo_sqlite' => extension_loaded('pdo_sqlite'),
+                    'zip' => extension_loaded('zip'),
+                    'xmlreader' => extension_loaded('xmlreader'),
+                ],
+            ], JSON_UNESCAPED_UNICODE);
+            return;
+        }
+        if ($metodo === 'POST' && $caminho === '/webhooks/open-finance') {
+            $resultado = $this->bancos->receberWebhook($request->json(), $request->header('X-Webhook-Token'));
+            header('Content-Type: application/json; charset=UTF-8');
+            echo json_encode($resultado, JSON_UNESCAPED_UNICODE);
+        }
+    }
+
+    private function entrar(string $metodo, Request $request): void
+    {
+        if ($metodo === 'POST') {
+            $usuario = $this->acesso->entrar($_POST);
+            session_regenerate_id(true);
+            $_SESSION['usuario_id'] = (int) $usuario['id'];
+            unset($_SESSION['empresa_id']);
+            $this->redirect('/');
+        }
+        if ((int) ($_SESSION['usuario_id'] ?? 0) !== 0) {
+            $this->redirect('/');
+        }
+        $this->view->raw('entrar', [
+            'csrf' => $_SESSION['csrf'],
+            'flash' => $_SESSION['flash'] ?? null,
+            'senhaInicial' => $this->acesso->senhaInicialPendente(),
+        ]);
+        unset($_SESSION['flash']);
+    }
+
+    private function criarEscritorio(string $metodo, Request $request): void
+    {
+        if ($metodo === 'POST') {
+            $usuario = $this->acesso->criarEscritorio(
+                $request->input('escritorio'),
+                $request->input('cnpj'),
+                $request->input('nome'),
+                $request->input('email'),
+                $request->input('senha'),
+            );
+            $this->assinaturas->apurar((int) $usuario['escritorio_id']);
+            session_regenerate_id(true);
+            $_SESSION['usuario_id'] = (int) $usuario['id'];
+            unset($_SESSION['empresa_id']);
+            $this->flash('ok', 'Escritório aberto no plano Essencial. A fatura deste mês já está em Assinatura.');
+            $this->redirect('/assinatura');
+        }
+        $this->view->raw('criar-escritorio', [
+            'csrf' => $_SESSION['csrf'],
+            'flash' => $_SESSION['flash'] ?? null,
+        ]);
+        unset($_SESSION['flash']);
+    }
+
+    /** @return array<string, mixed> */
+    private function exigirUsuario(string $caminho): array
+    {
+        $usuario = $this->acesso->daSessao((int) ($_SESSION['usuario_id'] ?? 0));
+        if ($usuario === null) {
+            $this->redirect('/entrar');
+        }
+        Tenant::definir((int) $usuario['escritorio_id']);
+        $this->usuario = $usuario;
+        $suspensa = $this->assinaturas->status((int) $usuario['escritorio_id']) === 'suspensa';
+        $livre = in_array($caminho, ['/assinatura', '/sair'], true);
+        if ($suspensa && !$livre) {
+            $this->flash('erro', 'A assinatura deste escritório está suspensa. A cobrança em aberto está em Assinatura.');
+            $this->redirect('/assinatura');
+        }
+        return $usuario;
+    }
+
+    private function assinatura(string $metodo, Request $request): void
+    {
+        $usuario = $this->usuario ?? [];
+        $escritorioId = (int) $usuario['escritorio_id'];
+        $podeGerir = in_array((string) $usuario['papel'], ['dono', 'plataforma'], true);
+        if ($metodo === 'POST' && $request->input('_acao') === 'plano') {
+            if (!$podeGerir) {
+                throw new ValidationException('Só o dono do escritório troca o plano.');
+            }
+            $this->assinaturas->trocarPlano($escritorioId, $request->input('plano'));
+            $this->flash('ok', 'Plano atualizado. A fatura aberta deste mês acompanha o preço novo.');
+            $this->redirect('/assinatura');
+        }
+        if ($metodo === 'POST' && $request->input('_acao') === 'equipe') {
+            if (!$podeGerir) {
+                throw new ValidationException('Só o dono do escritório inclui alguém na equipe.');
+            }
+            $this->acesso->cadastrarNoEscritorio($escritorioId, $_POST);
+            $this->flash('ok', 'Acesso da equipe criado.');
+            $this->redirect('/assinatura');
+        }
+        if ($metodo === 'POST' && $request->input('_acao') === 'senha') {
+            $this->acesso->trocarSenha((int) $usuario['id'], $request->input('senha_atual'), $request->input('senha_nova'));
+            $this->flash('ok', 'Senha alterada.');
+            $this->redirect('/assinatura');
+        }
+        $this->pagina('assinatura', [
+            'titulo' => 'Plano e equipe',
+            'conta' => $this->assinaturas->apurar($escritorioId),
+            'faturas' => $this->assinaturas->faturas($escritorioId),
+            'equipe' => $this->acesso->equipe($escritorioId),
+            'podeGerir' => $podeGerir,
+        ], 'assinatura');
+    }
+
+    private function plataforma(string $metodo, string $caminho, Request $request): void
+    {
+        if ((string) ($this->usuario['papel'] ?? '') !== 'plataforma') {
+            throw new ValidationException('A mesa da plataforma é de quem opera o SaaS.');
+        }
+        if ($metodo === 'POST' && preg_match('#^/plataforma/faturas/(\d+)/pagar$#', $caminho, $m)) {
+            $this->assinaturas->pagar((int) $m[1]);
+            $this->flash('ok', 'Fatura recebida.');
+            $this->redirect('/plataforma');
+        }
+        if ($metodo === 'POST' && preg_match('#^/plataforma/escritorios/(\d+)/suspender$#', $caminho, $m)) {
+            $this->assinaturas->definirStatus((int) $m[1], 'suspensa');
+            $this->flash('ok', 'Escritório suspenso. O acesso fica só na assinatura.');
+            $this->redirect('/plataforma');
+        }
+        if ($metodo === 'POST' && preg_match('#^/plataforma/escritorios/(\d+)/reativar$#', $caminho, $m)) {
+            $this->assinaturas->definirStatus((int) $m[1], 'ativa');
+            $this->flash('ok', 'Escritório reativado.');
+            $this->redirect('/plataforma');
+        }
+        if ($metodo === 'GET' && $caminho === '/plataforma') {
+            $this->pagina('plataforma', [
+                'titulo' => 'Clientes do sistema',
+                'carteira' => $this->assinaturas->carteira(),
+                'abertas' => $this->assinaturas->abertas(),
+            ], 'plataforma');
+            return;
+        }
+        $this->falha(404, 'Página não encontrada.');
+    }
+
     private function painel(): void
     {
         $empresa = $this->empresaAtual();
-        $dados = ['titulo' => 'Painel', 'tarefas' => [], 'documentos' => [], 'contas' => [], 'equacao' => null, 'temEmpresas' => $this->empresas->empresas() !== []];
+        $dados = ['titulo' => 'Início', 'tarefas' => [], 'documentos' => [], 'contas' => [], 'equacao' => null, 'temEmpresas' => $this->empresas->empresas() !== []];
         if ($empresa) {
             $dados['tarefas'] = $this->auditoria->tarefas((int) $empresa['id']);
             $dados['documentos'] = array_slice($this->auditoria->documentos((int) $empresa['id']), 0, 6);
@@ -258,7 +466,7 @@ final class Kernel
         }
         if ($metodo === 'POST') {
             $this->empresas->salvar($id, $_POST);
-            $this->flash('ok', 'Cadastro atualizado. O capital social já lançado não muda por aqui; use o razão.');
+            $this->flash('ok', 'Cadastro atualizado. O capital já lançado só muda em Livros.');
             $this->redirect('/empresas/' . $id);
         }
         $empresa = $this->empresas->obter($id);
@@ -283,10 +491,22 @@ final class Kernel
             throw new ValidationException('Selecione ao menos um XML, SPED ou ZIP.');
         }
         $ids = [];
+        $ignorados = 0;
+        $erros = 0;
         foreach ($arquivos as $arquivo) {
             $ids = array_merge($ids, $this->auditoria->importar((int) $empresa['id'], $arquivo['tmp'], $arquivo['nome']));
+            $resumo = $this->auditoria->resumoLote();
+            $ignorados += $resumo['ignorados'];
+            $erros += count($resumo['erros']);
         }
-        $this->flash('ok', count($ids) . ' documento(s) auditado(s) e lançado(s) quando a direção estava clara.');
+        $mensagem = count($ids) . ' documento(s) auditado(s) e lançado(s) quando a direção estava clara.';
+        if ($ignorados > 0) {
+            $mensagem .= ' ' . $ignorados . ' arquivo(s) do ZIP sem nota fiscal foram deixados de lado.';
+        }
+        if ($erros > 0) {
+            $mensagem .= ' ' . $erros . ' arquivo(s) não puderam ser lidos.';
+        }
+        $this->flash('ok', $mensagem);
         $this->redirect(count($ids) === 1 ? '/documentos/' . $ids[0] : '/auditoria');
     }
 
@@ -309,25 +529,44 @@ final class Kernel
                 throw new ValidationException('Envie um OFX ou CSV.');
             }
             $resultado = $this->bancos->importarArquivo((int) $request->input('conta_id'), $arquivo['tmp'], $arquivo['nome']);
-            $this->flash('ok', $resultado['importadas'] . ' transações importadas, ' . $resultado['automaticas'] . ' conciliadas sozinhas e ' . $resultado['fila'] . ' na fila.');
+            $this->flash('ok', $resultado['importadas'] . ' lançamentos lidos, ' . $resultado['automaticas'] . ' casados com notas e ' . $resultado['fila'] . ' para conferir.');
             $this->redirect('/conciliacao');
         }
         if ($metodo === 'POST' && $request->input('_acao') === 'cruzar') {
             $resultado = $this->bancos->reprocessarPendentes((int) $empresa['id']);
-            $this->flash('ok', $resultado['automaticas'] . ' pendências conciliadas e ' . $resultado['fila'] . ' novas sugestões.');
+            $this->flash('ok', $resultado['automaticas'] . ' lançamentos casados com notas e ' . $resultado['fila'] . ' ainda para conferir.');
             $this->redirect('/conciliacao');
         }
         if ($metodo === 'POST' && $request->input('_acao') === 'pluggy') {
             $resultado = $this->bancos->sincronizarPluggy((int) $request->input('conta_id'), $request->input('de'), $request->input('ate'));
-            $this->flash('ok', 'Pluggy: ' . $resultado['importadas'] . ' transações novas.');
+            $this->flash('ok', $resultado['importadas'] . ' lançamentos novos vieram do banco.');
             $this->redirect('/conciliacao');
         }
         $this->pagina('conciliacao', [
-            'titulo' => 'Conciliação',
+            'titulo' => 'Banco',
             'contas' => $this->bancos->contas((int) $empresa['id']),
             'transacoes' => $this->bancos->transacoes((int) $empresa['id']),
             'plano' => $this->razao->plano((int) $empresa['id']),
         ], 'conciliacao');
+    }
+
+    private function conferencia(string $metodo, Request $request): void
+    {
+        $empresa = $this->exigirEmpresa();
+        $hoje = date('Y-m-d');
+        $formulario = [];
+        foreach (['de', 'ate', 'rbt12', 'folha12', 'margem', 'horas_adicionais', 'valor_hora', 'escolha'] as $chave) {
+            $formulario[$chave] = $request->input($chave);
+        }
+        if ($metodo === 'POST' && $request->input('_acao') === 'decidir') {
+            $this->conferencia->registrar($empresa, $formulario, $hoje);
+            $this->flash('ok', 'A escolha do semestre ficou registrada, com o fundamento e a data até quando dá para voltar atrás.');
+            $this->redirect('/conferencia?de=' . rawurlencode($formulario['de']) . '&ate=' . rawurlencode($formulario['ate']) . '&rbt12=' . rawurlencode($formulario['rbt12']) . '&folha12=' . rawurlencode($formulario['folha12']) . '&margem=' . rawurlencode($formulario['margem']) . '&horas_adicionais=' . rawurlencode($formulario['horas_adicionais']) . '&valor_hora=' . rawurlencode($formulario['valor_hora']));
+        }
+        $this->pagina('conferencia', [
+            'titulo' => 'Mês',
+            'conta' => $this->conferencia->montar($empresa, $formulario, $hoje),
+        ], 'conferencia');
     }
 
     private function estrategia(string $metodo, Request $request): void
@@ -337,7 +576,7 @@ final class Kernel
         if ($metodo === 'POST') {
             $resultado = $this->estrategia->simular($empresa, $_POST);
             $this->pagina('estrategia', [
-                'titulo' => 'Estratégia tributária',
+                'titulo' => 'Comparar',
                 'resultado' => $resultado,
                 'coletado' => $resultado['coletado'],
                 'competencia' => $resultado['competencia'],
@@ -345,7 +584,7 @@ final class Kernel
             return;
         }
         $this->pagina('estrategia', [
-            'titulo' => 'Estratégia tributária',
+            'titulo' => 'Comparar',
             'resultado' => $this->estrategia->ultima((int) $empresa['id']),
             'coletado' => $this->estrategia->coletar((int) $empresa['id'], $competencia),
             'competencia' => $competencia,
@@ -356,13 +595,13 @@ final class Kernel
     {
         if ($metodo === 'POST' && $request->input('_acao') === 'reindexar') {
             $total = $this->leis->reindexarArquivos();
-            $this->flash('ok', $total . ' trechos reindexados a partir de database/leis.');
+            $this->flash('ok', $total . ' trechos entraram na consulta.');
             $this->redirect('/legislacao');
         }
         if ($metodo === 'POST' && $request->input('_acao') === 'importar') {
             $arquivo = $this->arquivos('markdown')[0] ?? null;
             if ($arquivo === null) {
-                throw new ValidationException('Envie um markdown.');
+                throw new ValidationException('Envie o arquivo da norma.');
             }
             $conteudo = file_get_contents($arquivo['tmp']);
             $total = $this->leis->importarMarkdown($conteudo === false ? '' : $conteudo, $arquivo['nome']);
@@ -379,7 +618,7 @@ final class Kernel
             $resposta = $this->leis->responder($consulta, $competencia, $empresa ? (int) $empresa['id'] : null);
         }
         $this->pagina('legislacao', [
-            'titulo' => 'Legislação',
+            'titulo' => 'Perguntar',
             'consulta' => $consulta,
             'competencia' => $competencia,
             'trechos' => $consulta !== '' && $resposta === null ? $this->leis->pesquisar($consulta, $competencia) : ($resposta['trechos'] ?? []),
@@ -413,7 +652,7 @@ final class Kernel
         }
         $auditor = new \App\Agents\Orchestrators\SanityReverseAuditor($this->db);
         $this->pagina('contabil', [
-            'titulo' => 'Contabilidade',
+            'titulo' => 'Livros',
             'balancete' => $this->razao->balancete((int) $empresa['id']),
             'lancamentos' => $this->razao->recentes((int) $empresa['id']),
             'plano' => $this->razao->plano((int) $empresa['id']),
@@ -437,7 +676,7 @@ final class Kernel
             return;
         }
         $pacote = $this->relatorios->parecer((int) $empresa['id'], false);
-        $this->pagina('relatorios', ['titulo' => 'Relatórios', 'pacote' => $pacote], 'relatorios');
+        $this->pagina('relatorios', ['titulo' => 'Parecer', 'pacote' => $pacote], 'relatorios');
     }
 
     private function configuracoes(string $metodo, Request $request): void
@@ -460,7 +699,7 @@ final class Kernel
                 }
                 $this->config->definir($chave, $request->input($campo));
             }
-            $this->flash('ok', 'Modelo de linguagem atualizado. Sem chave, os agentes seguem só nas ferramentas determinísticas.');
+            $this->flash('ok', 'Modelo de linguagem atualizado. Sem chave, as contas seguem só nas regras do sistema.');
             $this->redirect('/configuracoes');
         }
         if ($metodo === 'POST' && $request->input('_acao') === 'pluggy') {
@@ -471,7 +710,7 @@ final class Kernel
                 }
                 $this->config->definir($chave, $request->input($campo));
             }
-            $this->flash('ok', 'Open Finance atualizado.');
+            $this->flash('ok', 'Conexão com o banco atualizada.');
             $this->redirect('/configuracoes');
         }
         if ($metodo === 'POST' && $request->input('_acao') === 'aliquota') {
@@ -488,7 +727,7 @@ final class Kernel
             $this->redirect('/configuracoes');
         }
         $this->pagina('configuracoes', [
-            'titulo' => 'Configurações',
+            'titulo' => 'Escritório',
             'escritorio' => $this->empresas->escritorio(),
             'aliquotas' => $this->config->aliquotas(),
             'cclass' => $this->db->all('SELECT * FROM cclass_trib ORDER BY codigo'),
@@ -536,7 +775,7 @@ final class Kernel
         if (($_POST['oficial_completa'] ?? '') === '1') {
             $this->config->definir('tabelas.cclass_oficial_completa', '1');
         }
-        $this->flash('ok', $total . ' códigos de cClassTrib importados.');
+        $this->flash('ok', $total . ' classificações de produto importadas.');
     }
 
     private function importarRegras(): void
@@ -566,7 +805,7 @@ final class Kernel
             ]);
             $total++;
         }
-        $this->flash('ok', $total . ' regras de NCM importadas.');
+        $this->flash('ok', $total . ' regras de produto importadas.');
     }
 
     /** @return list<array<string, string>> */
@@ -636,6 +875,7 @@ final class Kernel
             'escritorio' => $this->empresas->escritorio(),
             'listaEmpresas' => $this->empresas->empresas(),
             'empresa' => $empresa,
+            'usuario' => $this->usuario,
             'pagina' => $pagina,
         ]);
     }
@@ -644,6 +884,13 @@ final class Kernel
     private function empresaAtual(): ?array
     {
         $id = (int) ($_SESSION['empresa_id'] ?? 0);
+        if ($id === 0) {
+            $lista = $this->empresas->empresas();
+            if (count($lista) === 1) {
+                $id = (int) $lista[0]['id'];
+                $_SESSION['empresa_id'] = $id;
+            }
+        }
         if ($id === 0) {
             return null;
         }
@@ -659,7 +906,7 @@ final class Kernel
     {
         $empresa = $this->empresaAtual();
         if ($empresa === null) {
-            throw new ValidationException('Cadastre e selecione uma empresa para usar esta área.');
+            throw new ValidationException('Escolha a empresa no menu para continuar.');
         }
         return $empresa;
     }

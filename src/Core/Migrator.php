@@ -138,6 +138,30 @@ final class Migrator
                 id $id, tipo TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL,
                 erro TEXT, criado_em TEXT NOT NULL, processado_em TEXT
             )",
+            "CREATE TABLE IF NOT EXISTS decisoes_regime (
+                id $id, empresa_id INTEGER NOT NULL, semestre_inicio TEXT NOT NULL, semestre_fim TEXT NOT NULL,
+                escolha TEXT NOT NULL, janela_inicio TEXT NOT NULL, janela_fim TEXT NOT NULL,
+                retratacao_ate TEXT, fundamento TEXT NOT NULL, fatores TEXT NOT NULL, registrada_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS usuarios (
+                id $id, escritorio_id INTEGER NOT NULL, nome TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
+                senha_hash TEXT NOT NULL, papel TEXT NOT NULL, ativo INTEGER NOT NULL DEFAULT 1,
+                trocar_senha INTEGER NOT NULL DEFAULT 0, criado_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS planos (
+                codigo TEXT PRIMARY KEY, nome TEXT NOT NULL, empresas_por_ciclo INTEGER NOT NULL,
+                preco_centavos INTEGER NOT NULL, descricao TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS assinaturas (
+                id $id, escritorio_id INTEGER NOT NULL, plano_codigo TEXT NOT NULL,
+                status TEXT NOT NULL, inicio TEXT NOT NULL, criada_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS faturas_saas (
+                id $id, escritorio_id INTEGER NOT NULL, competencia TEXT NOT NULL, plano_codigo TEXT NOT NULL,
+                valor_centavos INTEGER NOT NULL, status TEXT NOT NULL, vencimento TEXT NOT NULL,
+                paga_em TEXT, criada_em TEXT NOT NULL
+            )",
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_fatura_competencia ON faturas_saas (escritorio_id, competencia)',
             'CREATE INDEX IF NOT EXISTS idx_documentos_empresa ON documentos_fiscais (empresa_id, emissao)',
             'CREATE INDEX IF NOT EXISTS idx_transacoes_conta ON transacoes_bancarias (conta_id, data)',
             'CREATE INDEX IF NOT EXISTS idx_legislacao_vigencia ON legislacao_chunks (vigencia_inicio, vigencia_fim)',
@@ -198,6 +222,63 @@ final class Migrator
         if ($this->db->one('SELECT id FROM legislacao_chunks LIMIT 1') === null) {
             $this->importarLeis();
         }
+        $this->semearComercial();
+    }
+
+    private function semearComercial(): void
+    {
+        foreach ($this->planos() as $plano) {
+            if ($this->db->one('SELECT codigo FROM planos WHERE codigo = :codigo', [':codigo' => $plano['codigo']]) === null) {
+                $this->db->insert('planos', $plano);
+            }
+        }
+        $escritorio = $this->db->one('SELECT * FROM escritorios ORDER BY id LIMIT 1');
+        if ($escritorio === null) {
+            return;
+        }
+        if ($this->db->one('SELECT id FROM assinaturas WHERE escritorio_id = :id', [':id' => $escritorio['id']]) === null) {
+            $this->db->insert('assinaturas', [
+                'escritorio_id' => $escritorio['id'],
+                'plano_codigo' => 'avancado',
+                'status' => 'ativa',
+                'inicio' => date('Y-m-d'),
+                'criada_em' => date('Y-m-d H:i:s'),
+            ]);
+        }
+        if ($this->db->one('SELECT id FROM usuarios LIMIT 1') === null) {
+            $this->db->insert('usuarios', [
+                'escritorio_id' => $escritorio['id'],
+                'nome' => 'Dono do escritório',
+                'email' => 'dono@escritorio.local',
+                'senha_hash' => password_hash('primeiro-acesso', PASSWORD_DEFAULT),
+                'papel' => 'plataforma',
+                'ativo' => 1,
+                'trocar_senha' => 1,
+                'criado_em' => date('Y-m-d H:i:s'),
+            ]);
+        }
+        if ($this->db->one('SELECT id FROM usuarios WHERE email = :email', [':email' => 'admin']) === null) {
+            $this->db->insert('usuarios', [
+                'escritorio_id' => $escritorio['id'],
+                'nome' => 'Admin',
+                'email' => 'admin',
+                'senha_hash' => password_hash('admin', PASSWORD_DEFAULT),
+                'papel' => 'plataforma',
+                'ativo' => 1,
+                'trocar_senha' => 0,
+                'criado_em' => date('Y-m-d H:i:s'),
+            ]);
+        }
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function planos(): array
+    {
+        return [
+            ['codigo' => 'essencial', 'nome' => 'Essencial', 'empresas_por_ciclo' => 15, 'preco_centavos' => 49000, 'descricao' => 'Carteira de até 15 empresas. Todas as ferramentas, usuários da equipe e a conferência mensal.'],
+            ['codigo' => 'profissional', 'nome' => 'Profissional', 'empresas_por_ciclo' => 60, 'preco_centavos' => 129000, 'descricao' => 'Carteira de até 60 empresas. O mesmo produto, com espaço para o escritório que já tem equipe.'],
+            ['codigo' => 'avancado', 'nome' => 'Avançado', 'empresas_por_ciclo' => 200, 'preco_centavos' => 299000, 'descricao' => 'Carteira de até 200 empresas. A mesa da plataforma acompanha a cobrança dos outros escritórios.'],
+        ];
     }
 
     public function importarLeis(): int

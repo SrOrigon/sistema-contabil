@@ -1,1 +1,1 @@
-<section class="card"><h2>Emissão recusada</h2><p><?= e($mensagem) ?></p><p><a class="btn" href="/relatorios">Voltar aos relatórios</a> <a class="btn secundario" href="/auditoria">Abrir a auditoria</a></p></section>
+<section class="card"><h2>Emissão recusada</h2><p><?= e($mensagem) ?></p><p><a class="btn" href="/relatorios">Voltar ao parecer</a> <a class="btn secundario" href="/auditoria">Abrir as notas</a></p></section>

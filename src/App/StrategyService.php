@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Agents\Agentes\SimuladorRegimeAgente;
 use App\Agents\Orchestrators\TaxStrategyAgent;
+use App\Agents\RegistroDeAgente;
 use App\Core\Database;
 use App\Core\Format;
 use App\Core\Money;
@@ -124,16 +126,15 @@ final class StrategyService
             'recomendacao' => (string) $resultado['recomendacao'],
             'criada_em' => date('Y-m-d H:i:s'),
         ]);
-        $this->db->insert('agent_logs', [
-            'empresa_id' => $empresa['id'],
-            'agente' => 'estrategista-tributario',
-            'acao' => 'simular_carga_hibrido_vs_unificado',
-            'entrada' => json_encode(['competencia' => $competencia, 'origem' => $resultado['origem']], JSON_UNESCAPED_UNICODE),
-            'saida' => json_encode(['recomendacao' => $resultado['recomendacao']], JSON_UNESCAPED_UNICODE),
-            'ferramentas' => 'simular_carga_hibrido_vs_unificado',
-            'modelo' => 'deterministico',
-            'criado_em' => date('Y-m-d H:i:s'),
-        ]);
+        $contrato = SimuladorRegimeAgente::contrato();
+        RegistroDeAgente::gravar($this->db, (string) $contrato['id'], (string) $contrato['ferramenta'], (int) $empresa['id'], [
+            'competencia' => $competencia,
+            'origem' => $resultado['origem'],
+            'variaveis_usadas' => $resultado['variaveis_usadas'] ?? [],
+            'variaveis_ausentes' => $resultado['variaveis_ausentes'] ?? [],
+        ], [
+            'recomendacao' => $resultado['recomendacao'],
+        ], (string) ($resultado['modelo'] ?? 'deterministico'));
         return $resultado;
     }
 

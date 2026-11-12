@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Agents\Agentes\ConciliadorExtratoAgente;
 use App\Agents\Orchestrators\ReconciliationAgent;
+use App\Agents\RegistroDeAgente;
 use App\Banking\OpenFinance\PluggyClient;
 use App\Banking\StatementImporter;
 use App\Banking\Webhooks\TransactionWebhookHandler;
@@ -115,6 +117,7 @@ final class BankService
         $importadas = 0;
         $automaticas = 0;
         $fila = 0;
+        $variaveis = 0;
         foreach ($transacoes as $transacao) {
             if ($this->duplicada($contaId, $transacao)) {
                 continue;
@@ -133,9 +136,24 @@ final class BankService
                 'criado_em' => date('Y-m-d H:i:s'),
             ]);
             $importadas++;
-            $aplicada = $this->aplicarSugestao($empresaId, $id, $agente->sugerir($transacao, $documentos), $transacao);
+            $sugestao = $agente->sugerir($transacao, $documentos);
+            if (($sugestao['modelo'] ?? '') === 'variavel') {
+                $variaveis++;
+            }
+            $aplicada = $this->aplicarSugestao($empresaId, $id, $sugestao, $transacao);
             $automaticas += $aplicada['automaticas'];
             $fila += $aplicada['fila'];
+        }
+        if ($importadas > 0) {
+            $contrato = ConciliadorExtratoAgente::contrato();
+            RegistroDeAgente::gravar($this->db, (string) $contrato['id'], (string) $contrato['ferramenta'], $empresaId, [
+                'origem' => $origem,
+                'lancamentos' => $importadas,
+            ], [
+                'automaticas' => $automaticas,
+                'fila' => $fila,
+                'variavel_ilegivel' => $variaveis,
+            ], $variaveis > 0 ? 'variavel' : 'deterministico');
         }
         return ['importadas' => $importadas, 'automaticas' => $automaticas, 'fila' => $fila];
     }
@@ -151,10 +169,26 @@ final class BankService
         );
         $automaticas = 0;
         $fila = 0;
+        $variaveis = 0;
         foreach ($pendentes as $transacao) {
-            $aplicada = $this->aplicarSugestao($empresaId, (int) $transacao['id'], $agente->sugerir($transacao, $documentos), $transacao);
+            $sugestao = $agente->sugerir($transacao, $documentos);
+            if (($sugestao['modelo'] ?? '') === 'variavel') {
+                $variaveis++;
+            }
+            $aplicada = $this->aplicarSugestao($empresaId, (int) $transacao['id'], $sugestao, $transacao);
             $automaticas += $aplicada['automaticas'];
             $fila += $aplicada['fila'];
+        }
+        if ($pendentes !== []) {
+            $contrato = ConciliadorExtratoAgente::contrato();
+            RegistroDeAgente::gravar($this->db, (string) $contrato['id'], (string) $contrato['ferramenta'], $empresaId, [
+                'origem' => 'pendentes',
+                'lancamentos' => count($pendentes),
+            ], [
+                'automaticas' => $automaticas,
+                'fila' => $fila,
+                'variavel_ilegivel' => $variaveis,
+            ], $variaveis > 0 ? 'variavel' : 'deterministico');
         }
         return ['automaticas' => $automaticas, 'fila' => $fila];
     }

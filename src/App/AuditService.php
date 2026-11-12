@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\App;
 
+use App\Agents\Agentes\ValidadorRegrasAgente;
 use App\Agents\Orchestrators\DocumentAuditAgent;
+use App\Agents\RegistroDeAgente;
 use App\Core\Database;
 use App\Core\Format;
 use App\Core\InvalidXmlException;
@@ -19,6 +21,9 @@ use App\Fiscal\Validators\NcmCorrelationValidator;
 
 final class AuditService
 {
+    /** @var array{ignorados: int, erros: list<string>} */
+    private array $resumoLote = ['ignorados' => 0, 'erros' => []];
+
     public function __construct(
         private readonly Database $db,
         private readonly LedgerService $razao,
@@ -26,22 +31,39 @@ final class AuditService
     ) {
     }
 
+    /** @return array{ignorados: int, erros: list<string>} */
+    public function resumoLote(): array
+    {
+        return $this->resumoLote;
+    }
+
     /** @return list<int> */
     public function importar(int $empresaId, string $caminho, string $nome): array
     {
+        set_time_limit(0);
+        $this->resumoLote = ['ignorados' => 0, 'erros' => []];
         $empresa = $this->db->one('SELECT * FROM empresas WHERE id = :id', [':id' => $empresaId]);
         if ($empresa === null) {
             throw new ValidationException('Escolha a empresa antes de importar.');
         }
-        $documentos = $this->ler($caminho, $nome);
-        $ids = [];
-        foreach ($documentos as $documento) {
-            $ids[] = $this->gravar($empresa, $documento, $nome, $caminho);
+        $extensao = strtolower(pathinfo($nome, PATHINFO_EXTENSION));
+        $ids = $extensao === 'zip'
+            ? $this->ingerirZip($empresa, $caminho)
+            : $this->ingerirArquivo($empresa, $caminho, $nome, false);
+        if ($ids === []) {
+            $motivo = $this->resumoLote['erros'][0] ?? 'O arquivo não contém XML nem SPED.';
+            throw new InvalidXmlException($motivo);
         }
         (new BankService($this->db, $this->razao, $this->config))->reprocessarPendentes($empresaId);
         $this->db->insert('jobs', [
             'tipo' => 'auditoria',
-            'payload' => json_encode(['empresa_id' => $empresaId, 'arquivo' => $nome, 'documentos' => $ids], JSON_UNESCAPED_UNICODE),
+            'payload' => json_encode([
+                'empresa_id' => $empresaId,
+                'arquivo' => $nome,
+                'documentos' => count($ids),
+                'ignorados' => $this->resumoLote['ignorados'],
+                'erros' => array_slice($this->resumoLote['erros'], 0, 20),
+            ], JSON_UNESCAPED_UNICODE),
             'status' => 'concluido',
             'erro' => null,
             'criado_em' => date('Y-m-d H:i:s'),
@@ -50,39 +72,82 @@ final class AuditService
         return $ids;
     }
 
+    /** @param array<string, mixed> $empresa @return list<int> */
+    private function ingerirZip(array $empresa, string $caminho): array
+    {
+        $zip = new \ZipArchive();
+        if ($zip->open($caminho) !== true) {
+            throw new InvalidXmlException('O ZIP não pôde ser aberto.');
+        }
+        $ids = [];
+        $pasta = ROOT . '/storage/tmp';
+        if (!is_dir($pasta)) {
+            mkdir($pasta, 0777, true);
+        }
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $interno = (string) $zip->getNameIndex($i);
+            $normal = str_replace('\\', '/', $interno);
+            if (str_ends_with($normal, '/')) {
+                continue;
+            }
+            $nome = $this->nomeInterno($interno);
+            if ($this->entradaOculta($normal)) {
+                $this->resumoLote['ignorados']++;
+                continue;
+            }
+            $extensao = strtolower(pathinfo($nome, PATHINFO_EXTENSION));
+            if (!in_array($extensao, ['xml', 'txt', 'sped', 'zip'], true)) {
+                $this->resumoLote['ignorados']++;
+                continue;
+            }
+            $conteudo = $zip->getFromIndex($i);
+            if (!is_string($conteudo) || $conteudo === '') {
+                $this->resumoLote['erros'][] = $nome . ': arquivo vazio.';
+                continue;
+            }
+            $destino = $pasta . '/' . uniqid('lote_', true);
+            file_put_contents($destino, $conteudo);
+            unset($conteudo);
+            try {
+                if ($extensao === 'zip') {
+                    try {
+                        $ids = array_merge($ids, $this->ingerirZip($empresa, $destino));
+                    } catch (InvalidXmlException $e) {
+                        $this->resumoLote['erros'][] = $nome . ': ' . $e->getMessage();
+                    }
+                    continue;
+                }
+                $ids = array_merge($ids, $this->ingerirArquivo($empresa, $destino, $nome, true));
+            } finally {
+                @unlink($destino);
+            }
+        }
+        $zip->close();
+        return $ids;
+    }
+
+    /** @param array<string, mixed> $empresa @return list<int> */
+    private function ingerirArquivo(array $empresa, string $caminho, string $nome, bool $lote): array
+    {
+        try {
+            $documentos = $this->ler($caminho, $nome);
+        } catch (InvalidXmlException $e) {
+            if (!$lote) {
+                throw $e;
+            }
+            $this->resumoLote['erros'][] = $nome . ': ' . $e->getMessage();
+            return [];
+        }
+        $ids = [];
+        foreach ($documentos as $documento) {
+            $ids[] = $this->gravar($empresa, $documento, $nome, $caminho);
+        }
+        return $ids;
+    }
+
     /** @return list<array<string, mixed>> */
     private function ler(string $caminho, string $nome): array
     {
-        $extensao = strtolower(pathinfo($nome, PATHINFO_EXTENSION));
-        if ($extensao === 'zip') {
-            $zip = new \ZipArchive();
-            if ($zip->open($caminho) !== true) {
-                throw new InvalidXmlException('O ZIP não pôde ser aberto.');
-            }
-            $saida = [];
-            $pasta = ROOT . '/storage/tmp';
-            if (!is_dir($pasta)) {
-                mkdir($pasta, 0777, true);
-            }
-            for ($i = 0; $i < $zip->numFiles; $i++) {
-                $interno = (string) $zip->getNameIndex($i);
-                if (str_ends_with($interno, '/')) {
-                    continue;
-                }
-                $destino = $pasta . '/' . uniqid('lote_', true);
-                file_put_contents($destino, $zip->getFromIndex($i));
-                try {
-                    $saida = array_merge($saida, $this->ler($destino, basename($interno)));
-                } finally {
-                    @unlink($destino);
-                }
-            }
-            $zip->close();
-            if ($saida === []) {
-                throw new InvalidXmlException('O ZIP não contém XML nem SPED.');
-            }
-            return $saida;
-        }
         $inicio = ltrim((string) file_get_contents($caminho, false, null, 0, 300));
         if (str_starts_with($inicio, '|')) {
             return (new SpedFiscalParser())->parseArquivo($caminho);
@@ -91,6 +156,32 @@ final class AuditService
             return (new NfeXmlStreamParser())->parseArquivo($caminho);
         }
         throw new InvalidXmlException('Formato não reconhecido. Envie XML de NF-e, NFC-e, CT-e, NFS-e, SPED ou ZIP desses arquivos.');
+    }
+
+    private function nomeInterno(string $interno): string
+    {
+        $partes = [];
+        foreach (explode('/', str_replace('\\', '/', $interno)) as $parte) {
+            if ($parte === '' || $parte === '.' || $parte === '..') {
+                continue;
+            }
+            $partes[] = $parte;
+        }
+        $nome = implode('/', $partes);
+        return $nome === '' ? 'arquivo.xml' : $nome;
+    }
+
+    private function entradaOculta(string $normal): bool
+    {
+        foreach (explode('/', $normal) as $parte) {
+            if ($parte === '' || $parte === '.' || $parte === '..') {
+                continue;
+            }
+            if (str_starts_with($parte, '.') || strcasecmp($parte, '__MACOSX') === 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** @param array<string, mixed> $empresa @param array<string, mixed> $documento */
@@ -151,7 +242,7 @@ final class AuditService
                 $this->razao->postarDocumento((int) $empresa['id'], $gravado);
             }
             if ($direcao === 'indeterminada') {
-                $this->tarefa((int) $empresa['id'], 'Direção da nota ' . $documento['numero'], 'O CNPJ da empresa não é o emitente nem o destinatário. Defina se a nota é entrada ou saída para lançar no razão.', 'documento', $id);
+                $this->tarefa((int) $empresa['id'], 'Direção da nota ' . $documento['numero'], 'A empresa não aparece como quem vendeu nem como quem comprou. Diga se a nota é compra ou venda.', 'documento', $id);
             }
             if (strtolower(pathinfo($nome, PATHINFO_EXTENSION)) !== 'zip') {
                 $this->copiarArquivo($caminho, (int) $empresa['id'], $id);
@@ -234,10 +325,19 @@ final class AuditService
         $calculadora = new IbsCbsCalculator();
         $exigeNcm = !in_array($documento['modelo'], ['nfse', '57'], true);
         $pior = 'conforme';
+        $usadas = [];
+        $modeloLog = 'deterministico';
         foreach ($documento['itens'] as $item) {
             $classificacao = $this->classificar($validador, $item, $competencia, $exigeNcm);
             $hipoteses = $classificacao['hipoteses'] ?? [];
             $sugestao = $agente->sugerir($item, $classificacao, $feedback, $hipoteses, $llm);
+            foreach ($sugestao['variaveis_usadas'] ?? [] as $nome) {
+                $usadas[(string) $nome] = true;
+            }
+            $modeloItem = (string) $sugestao['modelo'];
+            if (!in_array($modeloItem, ['deterministico', 'variavel', 'aprendizado-do-escritorio'], true)) {
+                $modeloLog = $modeloItem;
+            }
             $esperado = $this->esperado($calculadora, $item, $classificacao, $aliquota);
             $classificacao = $this->cruzarValor($item, $classificacao, $esperado, $competencia, (string) $documento['modelo']);
             $itemId = $this->db->insert('documento_itens', [
@@ -285,16 +385,14 @@ final class AuditService
             }
             $pior = $this->pior($pior, (string) $classificacao['status']);
         }
-        $this->db->insert('agent_logs', [
-            'empresa_id' => $empresa['id'],
-            'agente' => 'auditor-de-documentos',
-            'acao' => 'validar_regras_tributarias_item',
-            'entrada' => json_encode(['documento' => $documento['numero'], 'itens' => count($documento['itens'])], JSON_UNESCAPED_UNICODE),
-            'saida' => json_encode(['status' => $pior], JSON_UNESCAPED_UNICODE),
-            'ferramentas' => 'validar_regras_tributarias_item',
-            'modelo' => $llm->configurado() ? $llm->modelo() : 'deterministico',
-            'criado_em' => date('Y-m-d H:i:s'),
-        ]);
+        $contrato = ValidadorRegrasAgente::contrato();
+        RegistroDeAgente::gravar($this->db, (string) $contrato['id'], (string) $contrato['ferramenta'], (int) $empresa['id'], [
+            'documento' => $documento['numero'],
+            'itens' => count($documento['itens']),
+            'variaveis_usadas' => array_keys($usadas),
+        ], [
+            'status' => $pior,
+        ], $modeloLog);
         return $pior;
     }
 

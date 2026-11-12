@@ -5,7 +5,7 @@
   <article class="card"><div class="rotulo">Patrimônio</div><div class="numero"><?= \App\Core\Format::money((int) $equacao['pl_centavos']) ?></div></article>
   <article class="card"><div class="rotulo">Resultado</div><div class="numero"><?= \App\Core\Format::money((int) $equacao['resultado_centavos']) ?></div></article>
 </section>
-<p class="sub">Ativo = passivo + patrimônio + resultado. Diferença atual: <?= \App\Core\Format::money((int) $equacao['diferenca_centavos']) ?>.</p>
+<p class="sub">O sistema confere se o ativo empata com o restante. Diferença: <?= \App\Core\Format::money((int) $equacao['diferenca_centavos']) ?>.</p>
 <div class="duas-colunas">
   <section class="card">
     <h2>Novo lançamento</h2>
@@ -41,11 +41,11 @@
   <section class="card">
     <h2>Últimos lançamentos</h2>
     <?php foreach ($lancamentos as $lancamento): ?>
-      <div class="item-lista"><span><?= \App\Core\Format::data((string) $lancamento['data']) ?> · <?= e((string) $lancamento['historico']) ?></span><span class="sub"><?= e((string) $lancamento['origem']) ?></span></div>
+      <div class="item-lista"><span><?= \App\Core\Format::data((string) $lancamento['data']) ?> · <?= e((string) $lancamento['historico']) ?></span></div>
     <?php endforeach; ?>
   </section>
 </div>
-<section class="card" style="margin-top:16px">
+<section class="card">
   <h2>Balancete</h2>
   <table>
     <thead><tr><th>Conta</th><th class="num">Débitos</th><th class="num">Créditos</th><th class="num">Saldo</th></tr></thead>

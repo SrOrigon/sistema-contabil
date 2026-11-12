@@ -6,6 +6,7 @@ namespace App\App;
 
 use App\Agents\Llm\LlmClient;
 use App\Core\Database;
+use App\Core\Tenant;
 use App\Core\ValidationException;
 
 final class SettingsService
@@ -58,7 +59,7 @@ final class SettingsService
             throw new ValidationException('A cor precisa estar no formato #RRGGBB.');
         }
         $this->db->run(
-            'UPDATE escritorios SET nome = :nome, cnpj = :cnpj, crc = :crc, cor = :cor, cidade = :cidade, telefone = :telefone, email = :email WHERE id = (SELECT id FROM escritorios ORDER BY id LIMIT 1)',
+            'UPDATE escritorios SET nome = :nome, cnpj = :cnpj, crc = :crc, cor = :cor, cidade = :cidade, telefone = :telefone, email = :email WHERE id = :id',
             [
                 ':nome' => $nome,
                 ':cnpj' => \App\Core\Format::digitos($dados['cnpj'] ?? ''),
@@ -67,6 +68,7 @@ final class SettingsService
                 ':cidade' => trim($dados['cidade'] ?? ''),
                 ':telefone' => trim($dados['telefone'] ?? ''),
                 ':email' => trim($dados['email'] ?? ''),
+                ':id' => $this->escritorioId(),
             ],
         );
     }
@@ -84,11 +86,25 @@ final class SettingsService
         if (!is_dir($pasta)) {
             mkdir($pasta, 0777, true);
         }
-        $destino = $pasta . '/logo.' . $extensao;
+        $id = $this->escritorioId();
+        $destino = $pasta . '/' . $id . '.' . $extensao;
         if (!move_uploaded_file($arquivo['tmp_name'], $destino)) {
             throw new ValidationException('Não foi possível guardar a marca.');
         }
-        $this->db->run('UPDATE escritorios SET logo_path = :caminho WHERE id = (SELECT id FROM escritorios ORDER BY id LIMIT 1)', [':caminho' => 'storage/branding/logo.' . $extensao]);
+        $this->db->run('UPDATE escritorios SET logo_path = :caminho WHERE id = :id', [
+            ':caminho' => 'storage/branding/' . $id . '.' . $extensao,
+            ':id' => $id,
+        ]);
+    }
+
+    private function escritorioId(): int
+    {
+        $definido = Tenant::id();
+        if ($definido !== null) {
+            return $definido;
+        }
+        $primeiro = $this->db->one('SELECT id FROM escritorios ORDER BY id LIMIT 1');
+        return (int) ($primeiro['id'] ?? 0);
     }
 
     /** @return list<array<string, mixed>> */

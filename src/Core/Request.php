@@ -15,6 +15,11 @@ final class Request
     {
         $caminho = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
         $caminho = rawurldecode((string) $caminho);
+        if (str_starts_with($caminho, '/public/')) {
+            $caminho = substr($caminho, strlen('/public')) ?: '/';
+        } elseif ($caminho === '/public') {
+            $caminho = '/';
+        }
         if ($caminho === '') {
             return '/';
         }

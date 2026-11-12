@@ -1,12 +1,14 @@
 /vendor/
 /.tools/
 /.env
+.env
 /storage/*.sqlite
 /storage/*.sqlite-*
 /storage/xml/
 /storage/branding/
 /storage/tmp/
-/storage/legislacao.sqlite
-/storage/legislacao.sqlite-*
+/storage/pdf/
+/storage/leis-github.token
 /database/acervo/
 !/storage/.gitkeep
+!/storage/.htaccess

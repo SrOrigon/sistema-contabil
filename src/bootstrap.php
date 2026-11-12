@@ -25,20 +25,20 @@ function e(mixed $value): string
 function chip(string $status): string
 {
     $rotulos = [
-        'conforme' => 'Conforme',
-        'alerta' => 'Alerta',
-        'rejeitado' => 'Rejeitado',
-        'ambiguo' => 'Ambíguo',
-        'corrigido' => 'Corrigido',
+        'conforme' => 'Certa',
+        'alerta' => 'Para olhar',
+        'rejeitado' => 'Com erro',
+        'ambiguo' => 'Em dúvida',
+        'corrigido' => 'Corrigida',
         'pendente' => 'Pendente',
-        'conciliado' => 'Conciliado',
+        'conciliado' => 'Casado',
         'ignorado' => 'Ignorado',
         'sugerida' => 'Sugestão',
-        'automatica' => 'Automática',
+        'automatica' => 'Casada',
         'confirmada' => 'Confirmada',
         'rejeitada' => 'Recusada',
-        'entrada' => 'Entrada',
-        'saida' => 'Saída',
+        'entrada' => 'Compra',
+        'saida' => 'Venda',
         'indeterminada' => 'Sem direção',
     ];
     return '<span class="chip chip-' . e($status) . '">' . e($rotulos[$status] ?? $status) . '</span>';
