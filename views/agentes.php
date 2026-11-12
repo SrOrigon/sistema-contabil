@@ -8,6 +8,8 @@ $oficios = [
     'auditor-equacao' => ['Confere a conta', 'Vê se débitos e créditos fecham antes de soltar um parecer.', '/contabil'],
     'porteiro-acesso' => ['Cuida de quem entra', 'Confere a senha e inclui a equipe neste escritório, sem abrir a carteira de outro.', '/assinatura'],
     'gestor-assinatura' => ['Cuida da mensalidade', 'Conta as empresas do plano e mantém a fatura do mês.', '/assinatura'],
+    'tesoureiro-preditivo' => ['Tesouraria inteligente', 'Reconhece gastos recorrentes (aluguel, luz, folha) e alerta desvios ou anomalias de caixa.', '/conciliacao'],
+    'auditor-compliance' => ['Compliance preventivo', 'Cruza notas e extratos em tempo real para evitar malha fina e divergências com o fisco.', '/auditoria'],
 ];
 $nomesAcao = [
     'validar_regras_tributarias_item' => 'Leu um item de nota',
@@ -19,6 +21,8 @@ $nomesAcao = [
     'autenticar_usuario' => 'Alguém entrou',
     'cadastrar_usuario' => 'Incluiu alguém na equipe',
     'apurar_assinatura' => 'Atualizou a mensalidade',
+    'classificar_tesouraria_preditiva' => 'Classificou despesa recorrente no banco',
+    'auditar_cruzamento_compliance' => 'Auditou cruzamento de compliance fiscal',
 ];
 ?>
 <section class="card">

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Agents;
 
+use App\Agents\Agentes\AuditorComplianceAgente;
 use App\Agents\Agentes\AuditorEquacaoAgente;
 use App\Agents\Agentes\ConferencistaMensalAgente;
 use App\Agents\Agentes\ConciliadorExtratoAgente;
@@ -11,6 +12,7 @@ use App\Agents\Agentes\ConsultorArtigoAgente;
 use App\Agents\Agentes\GestorAssinaturaAgente;
 use App\Agents\Agentes\PorteiroAcessoAgente;
 use App\Agents\Agentes\SimuladorRegimeAgente;
+use App\Agents\Agentes\TesoureiroPreditivoAgente;
 use App\Agents\Agentes\ValidadorRegrasAgente;
 
 /**
@@ -31,6 +33,8 @@ final class AgentCatalog
             ConferencistaMensalAgente::contrato(),
             SimuladorRegimeAgente::contrato(),
             ConciliadorExtratoAgente::contrato(),
+            TesoureiroPreditivoAgente::contrato(),
+            AuditorComplianceAgente::contrato(),
             ConsultorArtigoAgente::contrato(),
             AuditorEquacaoAgente::contrato(),
             PorteiroAcessoAgente::contrato(),

@@ -2,9 +2,12 @@
 
 declare(strict_types=1);
 
+use App\Agents\Agentes\AuditorComplianceAgente;
+use App\Agents\Agentes\TesoureiroPreditivoAgente;
 use App\App\AuditService;
 use App\App\BankService;
 use App\App\CompanyService;
+use App\App\FolhaPagamentoEngine;
 use App\App\KnowledgeService;
 use App\App\LedgerService;
 use App\App\SettingsService;
@@ -13,6 +16,7 @@ use App\Core\Database;
 use App\Core\Migrator;
 use App\Core\Money;
 use App\Fiscal\Engine\IbsCbsCalculator;
+use App\Fiscal\Engine\PlanejamentoTributarioAvancado;
 use App\Fiscal\Engine\SimplesNacionalCalculator;
 use App\Fiscal\Engine\TransitionSimulator;
 use App\Fiscal\Parsers\NfeXmlStreamParser;
@@ -409,6 +413,83 @@ $faturaDeNovo = $saas->apurar((int) $outro);
 $t->igual($contaSaas['fatura']['id'], $faturaDeNovo['fatura']['id'], 'A fatura do mês não duplica');
 \App\Core\Tenant::limpar();
 $banco->run('UPDATE planos SET empresas_por_ciclo = 15 WHERE codigo = :codigo', [':codigo' => 'essencial']);
+
+// 1. Testes de migração das novas tabelas
+$migrador = new Migrator($banco);
+$migrador->migrate();
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='regras_preditivas_banco'") !== null, 'Tabela regras_preditivas_banco criada');
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='divergencias_compliance'") !== null, 'Tabela divergencias_compliance criada');
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='cenarios_planejamento'") !== null, 'Tabela cenarios_planejamento criada');
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='colaboradores'") !== null, 'Tabela colaboradores criada');
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='provisoes_trabalhistas'") !== null, 'Tabela provisoes_trabalhistas criada');
+
+// 2. Testes do TesoureiroPreditivoAgente
+$tesoureiro = new TesoureiroPreditivoAgente();
+$resTesouraria = $tesoureiro->analisar([
+    'valor_centavos' => -250000,
+    'data' => '2026-11-05',
+    'descricao' => 'PAGTO ALUGUEL SALA 402 OUTUBRO',
+]);
+$t->verdadeiro($resTesouraria['recorrente'], 'Identifica despesa recorrente de aluguel');
+$t->verdadeiro($resTesouraria['automatica'], 'Confiança alta aprova conciliação automática');
+$t->igual('Aluguel do Imóvel', $resTesouraria['categoria'], 'Categoria correta do aluguel');
+
+$resDesvio = $tesoureiro->analisar(
+    ['valor_centavos' => -450000, 'data' => '2026-11-05', 'descricao' => 'PAGTO ALUGUEL SALA 402'],
+    [],
+    [['valor_centavos' => -250000, 'data' => '2026-09-05'], ['valor_centavos' => -250000, 'data' => '2026-10-05']]
+);
+$t->verdadeiro($resDesvio['desvio_detectado'], 'Detecta salto atípico no valor do aluguel');
+$t->verdadeiro(!$resDesvio['automatica'], 'Desvio anômalo exige aprovação do contador');
+
+// 3. Testes do AuditorComplianceAgente
+$compliance = new AuditorComplianceAgente();
+$resCompliancePendente = $compliance->auditar([
+    'documento_numero' => '1024',
+    'valor_documento_centavos' => 500000,
+    'tipo_operacao' => 'saida',
+    'data_emissao' => '2026-09-15',
+], 58);
+$t->verdadeiro(!$resCompliancePendente['em_conformidade'], 'Alerta nota emitida há 58 dias sem trânsito bancário');
+$t->igual('alta', $resCompliancePendente['severidade'], 'Severidade alta para risco de omissão de receita');
+
+$resComplianceRetencao = $compliance->auditar([
+    'documento_numero' => '1025',
+    'valor_documento_centavos' => 1000000,
+    'tipo_operacao' => 'saida',
+    'data_emissao' => '2026-11-01',
+    'valor_quitado_centavos' => 953500, // 4,65% CSRF
+], 10);
+$t->verdadeiro($resComplianceRetencao['em_conformidade'], 'Diferença de 4,65% é aceita como retenção CSRF na fonte');
+$t->igual('retencao_fonte_identificada', $resComplianceRetencao['divergencia_detectada'], 'Identifica retenção de tributos');
+
+// 4. Testes do FolhaPagamentoEngine
+$folha = new FolhaPagamentoEngine();
+$resInss = $folha->calcularInss(300000); // R$ 3.000,00
+$t->igual(26927, $resInss['inss_centavos'], 'INSS na faixa 3 de R$ 3.000,00 dá R$ 269,27');
+$t->igual(3, $resInss['faixa'], 'Faixa 3 do INSS');
+$t->igual(24000, $folha->calcularFgts(300000), 'FGTS 8% de R$ 3.000,00 é R$ 240,00');
+
+$resFolhaCompleta = $folha->processar(300000, 'João Silva');
+$t->igual(273073, $resFolhaCompleta['salario_liquido_centavos'], 'Salário líquido de R$ 2.730,73');
+$t->verdadeiro(count($resFolhaCompleta['partidas_contabeis']) >= 5, 'Gera partidas contábeis para folha, FGTS e provisões');
+
+// 5. Testes do PlanejamentoTributarioAvancado
+$planejamento = new PlanejamentoTributarioAvancado();
+$resPlan = $planejamento->simular([
+    'receita_mensal_centavos' => 5000000, // R$ 50.000/mês
+    'crescimento_percentual' => 20,
+    'rbt12_centavos' => 60000000, // R$ 600.000/ano
+    'anexo_simples' => 'I',
+    'folha_mensal_centavos' => 1000000,
+    'compras_insumos_centavos' => 2000000,
+    'percentual_vendas_pj' => 60,
+]);
+$t->igual(6000000, $resPlan['receita_projetada_centavos'], 'Receita projetada com 20% de crescimento é R$ 60.000,00');
+$t->verdadeiro(isset($resPlan['cenarios']['simples_unificado']), 'Simula cenário Simples Unificado');
+$t->verdadeiro(isset($resPlan['cenarios']['simples_hibrido']), 'Simula cenário Simples Híbrido');
+$t->verdadeiro(isset($resPlan['cenarios']['lucro_presumido']), 'Simula cenário Lucro Presumido');
+$t->verdadeiro(isset($resPlan['cenario_recomendado']), 'Emite veredito de melhor cenário tributário');
 
 echo $t->passou . " testes passaram";
 if ($t->falhou > 0) {

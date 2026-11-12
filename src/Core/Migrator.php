@@ -161,10 +161,48 @@ final class Migrator
                 valor_centavos INTEGER NOT NULL, status TEXT NOT NULL, vencimento TEXT NOT NULL,
                 paga_em TEXT, criada_em TEXT NOT NULL
             )",
+            "CREATE TABLE IF NOT EXISTS regras_preditivas_banco (
+                id $id, empresa_id INTEGER NOT NULL, padrao_historico TEXT NOT NULL,
+                categoria TEXT NOT NULL, conta_debito_id INTEGER, conta_credito_id INTEGER,
+                recorrente INTEGER NOT NULL DEFAULT 1, dia_estimado INTEGER,
+                confianca_base INTEGER NOT NULL DEFAULT 90, criada_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS divergencias_compliance (
+                id $id, empresa_id INTEGER NOT NULL, competencia TEXT NOT NULL,
+                tipo TEXT NOT NULL, severidade TEXT NOT NULL, documento_id INTEGER,
+                transacao_id INTEGER, valor_divergente_centavos INTEGER NOT NULL DEFAULT 0,
+                descricao_simples TEXT NOT NULL, detalhe_tecnico TEXT NOT NULL,
+                resolvida INTEGER NOT NULL DEFAULT 0, detectada_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS cenarios_planejamento (
+                id $id, empresa_id INTEGER NOT NULL, nome TEXT NOT NULL,
+                crescimento_percentual TEXT NOT NULL DEFAULT '0.00',
+                margem_lucro_percentual TEXT NOT NULL DEFAULT '20.00',
+                folha_anual_centavos INTEGER NOT NULL DEFAULT 0,
+                compras_insumos_centavos INTEGER NOT NULL DEFAULT 0,
+                rbt12_centavos INTEGER NOT NULL DEFAULT 0,
+                resultado_json TEXT NOT NULL, criado_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS colaboradores (
+                id $id, empresa_id INTEGER NOT NULL, nome TEXT NOT NULL,
+                cpf TEXT NOT NULL, cargo TEXT NOT NULL, salario_base_centavos INTEGER NOT NULL,
+                admissao TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ativo',
+                criado_em TEXT NOT NULL
+            )",
+            "CREATE TABLE IF NOT EXISTS provisoes_trabalhistas (
+                id $id, empresa_id INTEGER NOT NULL, colaborador_id INTEGER NOT NULL,
+                competencia TEXT NOT NULL, tipo TEXT NOT NULL, valor_centavos INTEGER NOT NULL,
+                encargos_centavos INTEGER NOT NULL DEFAULT 0, lancamento_id INTEGER,
+                calculada_em TEXT NOT NULL
+            )",
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_fatura_competencia ON faturas_saas (escritorio_id, competencia)',
             'CREATE INDEX IF NOT EXISTS idx_documentos_empresa ON documentos_fiscais (empresa_id, emissao)',
             'CREATE INDEX IF NOT EXISTS idx_transacoes_conta ON transacoes_bancarias (conta_id, data)',
             'CREATE INDEX IF NOT EXISTS idx_legislacao_vigencia ON legislacao_chunks (vigencia_inicio, vigencia_fim)',
+            'CREATE INDEX IF NOT EXISTS idx_regras_preditivas ON regras_preditivas_banco (empresa_id, recorrente)',
+            'CREATE INDEX IF NOT EXISTS idx_divergencias_empresa ON divergencias_compliance (empresa_id, competencia)',
+            'CREATE INDEX IF NOT EXISTS idx_colaboradores_empresa ON colaboradores (empresa_id, status)',
+            'CREATE INDEX IF NOT EXISTS idx_provisoes_colaborador ON provisoes_trabalhistas (colaborador_id, competencia)',
         ];
     }
 
