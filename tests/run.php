@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Agents\Agentes\AuditorComplianceAgente;
 use App\Agents\Agentes\TesoureiroPreditivoAgente;
 use App\Agents\Orchestrators\FechamentoAutonomoOrchestrator;
+use App\App\AssistenteFiscalChatService;
 use App\App\AuditService;
 use App\App\BankService;
 use App\App\CompanyService;
@@ -688,6 +689,40 @@ $tiposDetectados = array_column($resCruzamento['divergencias'], 'tipo');
 $t->verdadeiro(in_array('nota_cancelada_com_lancamento', $tiposDetectados, true), 'Detecta nota cancelada');
 $t->verdadeiro(in_array('omissao_sped_fiscal', $tiposDetectados, true), 'Detecta omissão de nota no SPED');
 $t->verdadeiro(in_array('divergencia_valor_nfe_sped', $tiposDetectados, true), 'Detecta divergência de valor entre NF-e e SPED');
+
+// 12. Testes do Módulo de Inteligência de Atendimento e Chat (AssistenteFiscalChatService)
+$migrador->migrate();
+$t->verdadeiro($banco->one("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_interacoes'") !== null, 'Tabela chat_interacoes criada');
+
+$chatService = new AssistenteFiscalChatService($banco);
+
+// Pergunta 1: Distribuição de lucros
+$respLucro = $chatService->responder((int) $id, 'Posso retirar 20 mil de lucro isento para a minha conta?');
+$t->igual('DISTRIBUICAO_LUCRO', $respLucro['intencao'], 'Identifica intenção de distribuição de lucros');
+$t->verdadeiro(str_contains((string) $respLucro['resposta_leigo'], 'isenta de Imposto de Renda'), 'Explica isenção de IRPF em linguagem simples');
+$t->verdadeiro(str_contains((string) $respLucro['embasamento_legal'], 'Lei nº 9.249/1995'), 'Cita embasamento legal correto');
+$t->igual('parecer_distribuicao_lucro', $respLucro['card_visual']['tipo'], 'Gera card visual de distribuição de lucros');
+
+// Pergunta 2: Compra de ativo/computador
+$respAtivo = $chatService->responder((int) $id, 'Posso comprar um computador de 10 mil para a empresa no CNPJ?');
+$t->igual('COMPRA_EQUIPAMENTO_ATIVO', $respAtivo['intencao'], 'Identifica compra de equipamento no CNPJ');
+$t->verdadeiro(str_contains((string) $respAtivo['resposta_leigo'], 'Ativo Imobilizado'), 'Explica classificação como Ativo Imobilizado');
+$t->verdadeiro(str_contains((string) $respAtivo['resposta_leigo'], '20% ao ano'), 'Explica depreciação de informática');
+
+// Pergunta 3: Previsão de imposto do mês
+$respImposto = $chatService->responder((int) $id, 'Quanto vou pagar de imposto neste mês?');
+$t->igual('IMPOSTO_MES', $respImposto['intencao'], 'Identifica consulta de imposto do mês');
+$t->verdadeiro(isset($respImposto['card_visual']['destaque']), 'Card visual com valor do imposto destacado');
+
+// Pergunta 4: Simulação de custo de contratação
+$respFolha = $chatService->responder((int) $id, 'Quanto custa contratar um funcionário com salário de 3000?');
+$t->igual('CONTRATAR_FUNCIONARIO', $respFolha['intencao'], 'Identifica simulação de contratação');
+$t->verdadeiro(str_contains((string) $respFolha['resposta_leigo'], 'custo real total'), 'Apresenta custo total detalhado da empresa');
+
+// Pergunta 5: Simulação de crescimento de faturamento
+$respSimulacao = $chatService->responder((int) $id, 'E se o faturamento crescer 20% no próximo ano?');
+$t->igual('SIMULACAO_FATURAMENTO', $respSimulacao['intencao'], 'Identifica simulação de expansão');
+$t->verdadeiro(isset($respSimulacao['card_visual']['destaque']), 'Card visual com recomendação de regime tributário');
 
 echo $t->passou . " testes passaram";
 if ($t->falhou > 0) {

@@ -221,6 +221,12 @@ final class Migrator
                 relatorio_leigo TEXT NOT NULL, relatorio_tecnico TEXT NOT NULL,
                 executado_por TEXT NOT NULL, executado_em TEXT NOT NULL
             )",
+            "CREATE TABLE IF NOT EXISTS chat_interacoes (
+                id $id, empresa_id INTEGER NOT NULL, usuario_id INTEGER,
+                pergunta TEXT NOT NULL, intencao TEXT NOT NULL,
+                resposta_leigo TEXT NOT NULL, card_json TEXT NOT NULL,
+                criada_em TEXT NOT NULL
+            )",
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_fatura_competencia ON faturas_saas (escritorio_id, competencia)',
             'CREATE INDEX IF NOT EXISTS idx_documentos_empresa ON documentos_fiscais (empresa_id, emissao)',
             'CREATE INDEX IF NOT EXISTS idx_transacoes_conta ON transacoes_bancarias (conta_id, data)',
@@ -232,6 +238,7 @@ final class Migrator
             'CREATE INDEX IF NOT EXISTS idx_teses_empresa ON teses_tributarias_detectadas (empresa_id, tese_codigo)',
             'CREATE INDEX IF NOT EXISTS idx_projecoes_empresa ON projecoes_fluxo_caixa (empresa_id, data_base)',
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_fechamento_competencia ON fechamentos_mensais (empresa_id, competencia)',
+            'CREATE INDEX IF NOT EXISTS idx_chat_empresa ON chat_interacoes (empresa_id, criada_em)',
         ];
     }
 
